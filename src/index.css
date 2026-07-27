@@ -1,0 +1,86 @@
+@import 'tailwindcss';
+@import '@fontsource/space-grotesk/500.css';
+@import '@fontsource/space-grotesk/600.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+
+@theme {
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-heading: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
+
+  --color-canvas: #fafafa;
+  --color-surface: #ffffff;
+  --color-line: #e4e4e7;
+  --color-line-strong: #d4d4d8;
+  --color-ink: #18181b;
+  --color-ink-muted: #71717a;
+  --color-accent: #0f6656;
+  --color-accent-hover: #0b4f43;
+  --color-accent-soft: #e8f2f0;
+  --color-danger: #b91c1c;
+  --color-danger-soft: #fef2f2;
+  --color-danger-line: #fecaca;
+}
+
+/*
+ * Dark-mode overrides live outside @theme: Tailwind flattens @theme blocks
+ * into a single :root ruleset at build time, so a @theme nested inside this
+ * media query would just clobber the light values unconditionally instead
+ * of applying conditionally. Overriding the same custom properties with
+ * plain CSS keeps the media query intact.
+ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-canvas: #121212;
+    --color-surface: #1a1a1a;
+    --color-line: #2c2c2e;
+    --color-line-strong: #3a3a3c;
+    --color-ink: #f2f2f2;
+    --color-ink-muted: #9b9b9e;
+    --color-accent: #35a08a;
+    --color-accent-hover: #4bb89f;
+    --color-accent-soft: #16302a;
+    --color-danger: #f87171;
+    --color-danger-soft: #2a1616;
+    --color-danger-line: #4a1f1f;
+  }
+}
+
+html {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-heading);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
