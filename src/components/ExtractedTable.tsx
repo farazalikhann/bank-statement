@@ -92,7 +92,7 @@ export function ExtractedTable({
                     </span>
                     {row.mergedLineCount > 0 && cellIndex === row.mergedIntoIndex && (
                       <span
-                        title={`${row.mergedLineCount} wrapped line${row.mergedLineCount > 1 ? 's' : ''} merged in from the row${row.mergedLineCount > 1 ? 's' : ''} below`}
+                        title={`${row.mergedLineCount} wrapped line${row.mergedLineCount > 1 ? 's' : ''} merged in from the row${row.mergedLineCount > 1 ? 's' : ''} below${row.mergedFromNextPage ? ' (including text from the next page)' : ''}`}
                         className="ml-2 inline-block rounded-full bg-accent-soft px-1.5 py-0.5 align-middle font-sans text-xs font-medium text-accent"
                       >
                         +{row.mergedLineCount}

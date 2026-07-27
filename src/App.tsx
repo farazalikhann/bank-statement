@@ -7,6 +7,7 @@ import { StatsBar } from './components/StatsBar';
 import { ExtractedTable } from './components/ExtractedTable';
 import { DroppedRowsPanel } from './components/DroppedRowsPanel';
 import { ParsingSummary } from './components/ParsingSummary';
+import { IntegrityReport } from './components/IntegrityReport';
 
 function App() {
   const {
@@ -32,6 +33,8 @@ function App() {
     transactionOrder,
     currentPageTransactions,
     currentPageConfidence,
+    pageIntegrity,
+    statementSummary,
     loadFile,
     reset,
   } = usePdfExtraction();
@@ -87,6 +90,11 @@ function App() {
                 </button>
               </div>
             </div>
+
+            <IntegrityReport
+              pageIntegrity={pageIntegrity}
+              statementSummary={statementSummary}
+            />
 
             <ControlsPanel
               toleranceY={toleranceY}

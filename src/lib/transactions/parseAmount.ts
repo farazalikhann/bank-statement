@@ -1,1 +1,1 @@
-export { parseAmountWithConfidence } from '../pdf/textPatterns';
+export { extractTrailingAmount, parseAmountWithConfidence } from '../pdf/textPatterns';

@@ -109,6 +109,26 @@ export function parseCurrencyAmount(text: string): number | null {
   return parseAmountWithConfidence(text)?.value ?? null;
 }
 
+// Summary lines ("Opening Balance 5,000.00") are often a single text run,
+// label and figure together, rather than separate table cells like a real
+// transaction row — so unlike parseAmountWithConfidence (which requires the
+// *whole* string to be just an amount), this pulls the amount from the end
+// of a longer string.
+export function extractTrailingAmount(
+  text: string,
+): { value: number; confidence: ConfidenceLevel; matchedText: string } | null {
+  const tokens = text.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return null;
+
+  let candidate = tokens[tokens.length - 1];
+  if (/^(?:CR|DR)$/i.test(candidate) && tokens.length >= 2) {
+    candidate = `${tokens[tokens.length - 2]} ${candidate}`;
+  }
+
+  const parsed = parseAmountWithConfidence(candidate);
+  return parsed ? { ...parsed, matchedText: candidate } : null;
+}
+
 const PAGE_NUMBER_PATTERN = /^page\s+\d+(\s+of\s+\d+)?$/i;
 
 export function isPageNumberText(text: string): boolean {
@@ -119,4 +139,31 @@ export function isPageNumberText(text: string): boolean {
 
 export function normalizeRowText(cells: string[]): string {
   return cells.join(' ').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+const SUMMARY_LABEL_PATTERN =
+  /\b(?:(?:opening|beginning|previous|closing|ending|new|current)\s+balance|total\s+(?:deposits|credits|withdrawals|debits))\b/i;
+
+// A coarse, role-agnostic check used only to protect summary lines (opening
+// balance, totals) from the above-first-date furniture cutoff — they
+// legitimately sit before the first transaction, same as real page
+// furniture, but shouldn't be silently discarded. The precise,
+// role-aware classification into a specific summary kind happens in
+// src/lib/transactions/extractSummaryBlocks.ts.
+export function isSummaryLabelText(text: string): boolean {
+  return SUMMARY_LABEL_PATTERN.test(text);
+}
+
+// A summary line (opening balance, totals) must never be treated as a
+// wrapped continuation of the previous transaction, or dropped as an
+// orphan with nothing to say — it needs both the keyword and an amount
+// (whole-cell or trailing a label in one combined cell) to qualify, which
+// keeps this narrow.
+export function looksLikeSummaryLine(cells: string[]): boolean {
+  const fullText = cells.filter((cell) => cell.trim()).join(' ').trim();
+  if (!isSummaryLabelText(fullText)) return false;
+  return (
+    cells.some((cell) => cell.trim() && parseCurrencyAmount(cell) !== null) ||
+    extractTrailingAmount(fullText) !== null
+  );
 }

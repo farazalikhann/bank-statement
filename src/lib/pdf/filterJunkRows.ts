@@ -1,35 +1,74 @@
-import type { CleanedRow, DroppedRow, DropReason } from './types';
-import { isDateLike, isPageNumberText, normalizeRowText } from './textPatterns';
+import type { CleanedRow, DroppedRow, DropReason, RawRow } from './types';
+import {
+  isDateLike,
+  isPageNumberText,
+  looksLikeSummaryLine,
+  normalizeRowText,
+} from './textPatterns';
 import { rowHasAmount } from './mergeMultiLineRows';
 
-export function buildRepeatedRowFrequency(
-  pagesOfCells: string[][][],
-): Map<string, Set<number>> {
-  const frequency = new Map<string, Set<number>>();
+interface FrequencyEntry {
+  pageIndex: number;
+  relativeY: number;
+}
 
-  pagesOfCells.forEach((rowsOfCells, pageIndex) => {
-    for (const cells of rowsOfCells) {
-      const normalized = normalizeRowText(cells);
+// How close (as a fraction of page height) a repeated row's position has to
+// stay across pages to count as furniture rather than a coincidentally
+// identical transaction elsewhere on the page.
+const POSITION_TOLERANCE = 0.15;
+
+export function buildRepeatedRowFrequency(
+  pagesOfRawRows: RawRow[][],
+): Map<string, FrequencyEntry[]> {
+  const frequency = new Map<string, FrequencyEntry[]>();
+
+  pagesOfRawRows.forEach((rows, pageIndex) => {
+    for (const row of rows) {
+      const normalized = normalizeRowText(row.cells);
       if (!normalized) continue;
-      const pages = frequency.get(normalized) ?? new Set<number>();
-      pages.add(pageIndex);
-      frequency.set(normalized, pages);
+      const entries = frequency.get(normalized) ?? [];
+      entries.push({ pageIndex, relativeY: row.relativeY });
+      frequency.set(normalized, entries);
     }
   });
 
   return frequency;
 }
 
-export function filterJunkRows(
-  rows: CleanedRow[],
-  frequency: Map<string, Set<number>>,
-): { kept: CleanedRow[]; dropped: DroppedRow[] } {
-  const kept: CleanedRow[] = [];
+function isRepeatedAcrossPages(
+  normalized: string,
+  frequency: Map<string, FrequencyEntry[]>,
+): boolean {
+  const entries = frequency.get(normalized);
+  if (!entries || entries.length <= 1) return false;
+  if (new Set(entries.map((entry) => entry.pageIndex)).size <= 1) return false;
+  const positions = entries.map((entry) => entry.relativeY);
+  return Math.max(...positions) - Math.min(...positions) <= POSITION_TOLERANCE;
+}
+
+// Phase 1: position/pattern-based furniture — safe to remove before any
+// merging happens, since none of these checks depend on merge outcomes.
+//
+// The above-first-date cutoff only applies to the document's first page.
+// On later pages, a row sitting before that page's own first dated row is
+// indistinguishable, from the page's content alone, from a wrapped
+// description continuing off the bottom of the previous page — both are
+// "no date, no amount, sitting at the top of the page." Real bank
+// statements essentially never open a continuation page with fresh
+// disclosure text, so it's a safe trade to leave those rows as merge/
+// stitch candidates here and let stitchCrossPageRows claim genuine
+// continuations, with dropOrphanRows catching whatever's left unclaimed.
+export function stripPatternFurniture(
+  rows: RawRow[],
+  frequency: Map<string, FrequencyEntry[]>,
+  isFirstPage: boolean,
+): { candidates: string[][]; dropped: DroppedRow[] } {
+  const candidates: string[][] = [];
   const dropped: DroppedRow[] = [];
 
-  const firstDateIndex = rows.findIndex((row) =>
-    row.cells.some((cell) => isDateLike(cell)),
-  );
+  const firstDateIndex = isFirstPage
+    ? rows.findIndex((row) => row.cells.some((cell) => isDateLike(cell)))
+    : -1;
 
   rows.forEach((row, index) => {
     const fullText = row.cells
@@ -37,26 +76,52 @@ export function filterJunkRows(
       .join(' ')
       .trim();
     const normalized = normalizeRowText(row.cells);
-    const nonEmptyCells = row.cells.filter((cell) => cell.trim());
 
     let reason: DropReason | null = null;
 
-    if (firstDateIndex >= 0 && index < firstDateIndex) {
+    if (
+      firstDateIndex >= 0 &&
+      index < firstDateIndex &&
+      !looksLikeSummaryLine(row.cells)
+    ) {
       reason = 'above-first-date';
     } else if (isPageNumberText(fullText)) {
       reason = 'page-number';
-    } else if ((frequency.get(normalized)?.size ?? 0) > 1) {
+    } else if (isRepeatedAcrossPages(normalized, frequency)) {
       reason = 'repeated-across-pages';
-    } else if (nonEmptyCells.length <= 1 && !rowHasAmount(row.cells)) {
-      reason = 'single-cell-no-amount';
     }
 
     if (reason) {
       dropped.push({ cells: row.cells, reason });
     } else {
-      kept.push(row);
+      candidates.push(row.cells);
     }
   });
+
+  return { candidates, dropped };
+}
+
+// Phase 2 (runs after merge, both within-page and cross-page): whatever
+// still has only one non-empty cell and no amount never found a
+// transaction to attach to, so it's stray text rather than page furniture.
+export function dropOrphanRows(
+  rows: CleanedRow[],
+): { kept: CleanedRow[]; dropped: DroppedRow[] } {
+  const kept: CleanedRow[] = [];
+  const dropped: DroppedRow[] = [];
+
+  for (const row of rows) {
+    const nonEmptyCells = row.cells.filter((cell) => cell.trim());
+    const isOrphan =
+      nonEmptyCells.length <= 1 &&
+      !rowHasAmount(row.cells) &&
+      !looksLikeSummaryLine(row.cells);
+    if (isOrphan) {
+      dropped.push({ cells: row.cells, reason: 'single-cell-no-amount' });
+    } else {
+      kept.push(row);
+    }
+  }
 
   return { kept, dropped };
 }

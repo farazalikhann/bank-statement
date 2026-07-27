@@ -67,9 +67,18 @@ export interface CleanedRow {
   cells: string[];
   mergedLineCount: number;
   mergedIntoIndex: number;
+  mergedFromNextPage: boolean;
 }
 
 export interface DroppedRow {
   cells: string[];
   reason: DropReason;
+}
+
+// A row mapped to column cells, still carrying its vertical position
+// (0 = top of page, 1 = bottom) so furniture detection can require a
+// consistent position across pages, not just matching text.
+export interface RawRow {
+  cells: string[];
+  relativeY: number;
 }

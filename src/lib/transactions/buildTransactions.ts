@@ -75,6 +75,8 @@ export function buildTransactions(
   shape: ColumnShape,
   dateFormatInfo: DateFormatInfo,
   fallbackYear: number | null,
+  pageNumber: number,
+  forceLowConfidence: boolean,
 ): Transaction[] {
   const dateIndex = roles.indexOf('date');
   const descriptionIndex = roles.indexOf('description');
@@ -101,19 +103,22 @@ export function buildTransactions(
       description: descriptionRaw,
       amount,
       balance: parsedBalance?.value ?? null,
+      pageNumber,
       raw: {
         date: dateRaw,
         description: descriptionRaw,
         amount: amountRaw,
         balance: balanceRaw,
       },
-      confidence: {
-        date: parsedDate?.confidence ?? 'low',
-        description:
-          descriptionIndex >= 0 && descriptionRaw.trim() ? 'high' : 'low',
-        amount: amountConfidence,
-        balance: parsedBalance?.confidence ?? 'low',
-      },
+      confidence: forceLowConfidence
+        ? { date: 'low', description: 'low', amount: 'low', balance: 'low' }
+        : {
+            date: parsedDate?.confidence ?? 'low',
+            description:
+              descriptionIndex >= 0 && descriptionRaw.trim() ? 'high' : 'low',
+            amount: amountConfidence,
+            balance: parsedBalance?.confidence ?? 'low',
+          },
     };
 
     return transaction;

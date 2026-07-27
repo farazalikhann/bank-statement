@@ -1,60 +1,47 @@
 import type { CleanedRow } from './types';
-import { isPageNumberText, normalizeRowText, parseCurrencyAmount } from './textPatterns';
+import { isDateLike, looksLikeSummaryLine, parseCurrencyAmount } from './textPatterns';
 
 export function rowHasAmount(cells: string[]): boolean {
   return cells.some((cell) => parseCurrencyAmount(cell) !== null);
 }
 
-function longestCellIndex(cells: string[]): number {
-  let bestIndex = 0;
-  let bestLength = -1;
-  cells.forEach((cell, index) => {
-    if (cell.length > bestLength) {
-      bestLength = cell.length;
-      bestIndex = index;
-    }
-  });
-  return bestIndex;
+// Picks which cell wrapped continuation text should fold into. Prefers the
+// longest cell that doesn't itself look like a date or an amount — plain
+// character count alone can pick the date column over a short description
+// like "Interest" (8 chars) next to a 10-character date.
+export function bestMergeTargetIndex(cells: string[]): number {
+  const proseIndices = cells
+    .map((cell, index) => ({ cell, index }))
+    .filter(
+      ({ cell }) =>
+        cell.trim() && !isDateLike(cell) && parseCurrencyAmount(cell) === null,
+    );
+  const candidates = proseIndices.length > 0
+    ? proseIndices
+    : cells.map((cell, index) => ({ cell, index }));
+
+  return candidates.reduce((best, current) =>
+    current.cell.length > best.cell.length ? current : best,
+  ).index;
 }
 
-// A no-amount row that's actually page furniture (a page number, or text
-// repeated on other pages) must never be folded into the previous
-// transaction's description — it needs to stay its own row so
-// filterJunkRows can drop it visibly instead of silently corrupting a
-// real transaction.
-function isFurnitureRow(
-  cells: string[],
-  frequency: Map<string, Set<number>>,
-): boolean {
-  const fullText = cells
-    .filter((cell) => cell.trim())
-    .join(' ')
-    .trim();
-  if (isPageNumberText(fullText)) return true;
-  const normalized = normalizeRowText(cells);
-  return (frequency.get(normalized)?.size ?? 0) > 1;
-}
-
-export function mergeMultiLineRows(
-  cellsList: string[][],
-  frequency: Map<string, Set<number>>,
-): CleanedRow[] {
+// Input is expected to already be furniture-free (stripPatternFurniture runs
+// first) so this only has to decide, for each row, whether it's a wrapped
+// continuation of the previous one (no amount of its own) or a transaction
+// in its own right.
+export function mergeMultiLineRows(cellsList: string[][]): CleanedRow[] {
   const result: CleanedRow[] = [];
 
   for (const cells of cellsList) {
     const previous = result[result.length - 1];
 
-    if (
-      !rowHasAmount(cells) &&
-      previous &&
-      !isFurnitureRow(cells, frequency)
-    ) {
+    if (!rowHasAmount(cells) && previous && !looksLikeSummaryLine(cells)) {
       const extraText = cells
         .filter((cell) => cell.trim())
         .join(' ')
         .trim();
       if (extraText) {
-        const targetIndex = longestCellIndex(previous.cells);
+        const targetIndex = bestMergeTargetIndex(previous.cells);
         previous.cells[targetIndex] = previous.cells[targetIndex]
           ? `${previous.cells[targetIndex]}\n${extraText}`
           : extraText;
@@ -67,7 +54,8 @@ export function mergeMultiLineRows(
     result.push({
       cells: [...cells],
       mergedLineCount: 0,
-      mergedIntoIndex: longestCellIndex(cells),
+      mergedIntoIndex: bestMergeTargetIndex(cells),
+      mergedFromNextPage: false,
     });
   }
 

@@ -7,6 +7,7 @@ export interface Transaction {
   description: string;
   amount: number;
   balance: number | null;
+  pageNumber: number;
   raw: {
     date: string;
     description: string;
@@ -38,3 +39,28 @@ export type ColumnShape =
     };
 
 export type TransactionOrder = 'oldest-first' | 'newest-first' | 'unknown';
+
+export type SummaryItemKind =
+  | 'opening-balance'
+  | 'closing-balance'
+  | 'total-deposits'
+  | 'total-withdrawals';
+
+export interface SummaryItem {
+  kind: SummaryItemKind;
+  label: string;
+  value: number;
+  pageNumber: number;
+  raw: string;
+}
+
+export interface StatementSummary {
+  items: SummaryItem[];
+}
+
+export interface PageIntegrity {
+  pageNumber: number;
+  transactionCount: number;
+  droppedCount: number;
+  columnsMatchConsensus: boolean;
+}
