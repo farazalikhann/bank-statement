@@ -1,4 +1,8 @@
+import { useCallback, useEffect, useMemo } from 'react';
 import { usePdfExtraction } from './hooks/usePdfExtraction';
+import { useEditableTransactions } from './hooks/useEditableTransactions';
+import { useReconciliation } from './hooks/useReconciliation';
+import { useExport } from './hooks/useExport';
 import { FileDropzone } from './components/FileDropzone';
 import { ErrorMessage } from './components/ErrorMessage';
 import { PageSelector } from './components/PageSelector';
@@ -8,6 +12,19 @@ import { ExtractedTable } from './components/ExtractedTable';
 import { DroppedRowsPanel } from './components/DroppedRowsPanel';
 import { ParsingSummary } from './components/ParsingSummary';
 import { IntegrityReport } from './components/IntegrityReport';
+import { TransactionGrid } from './components/TransactionGrid';
+import { ReconciliationPanel } from './components/ReconciliationPanel';
+import { ExportPanel } from './components/ExportPanel';
+
+function formatMoney(value: number): string {
+  return Math.abs(value).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+const UNSAVED_EDITS_MESSAGE =
+  'You have unsaved edits in the transaction table. They exist only in this tab and will be lost. Continue anyway?';
 
 function App() {
   const {
@@ -28,9 +45,11 @@ function App() {
     columnRoles,
     setColumnRoleOverride,
     dateFormatInfo,
+    fallbackYear,
     setDateFormatOverride,
     columnShape,
     transactionOrder,
+    transactions,
     currentPageTransactions,
     currentPageConfidence,
     pageIntegrity,
@@ -38,6 +57,89 @@ function App() {
     loadFile,
     reset,
   } = usePdfExtraction();
+
+  const {
+    rows: editableRows,
+    hasEdits,
+    canUndo,
+    canRedo,
+    commitEdit,
+    deleteRow,
+    insertRow,
+    undo,
+    redo,
+  } = useEditableTransactions(fileName, transactions, dateFormatInfo, fallbackYear);
+
+  const {
+    result: reconciliation,
+    setOpeningBalanceInput,
+    setClosingBalanceInput,
+  } = useReconciliation(fileName, editableRows, statementSummary);
+
+  const rowFlags = useMemo(() => {
+    const map = new Map<string, string[]>();
+    const addFlag = (rowId: string, message: string) => {
+      const list = map.get(rowId) ?? [];
+      list.push(message);
+      map.set(rowId, list);
+    };
+
+    for (const brk of reconciliation.balanceBreaks) {
+      addFlag(
+        brk.rowId,
+        `Balance doesn't match — expected ${formatMoney(brk.expectedBalance)}, found ${formatMoney(brk.actualBalance)} (off by $${formatMoney(brk.difference)})`,
+      );
+    }
+    for (const group of reconciliation.duplicates) {
+      for (const rowId of group.rowIds) {
+        addFlag(rowId, 'Possible duplicate — same date, amount, and description as another row');
+      }
+    }
+    for (const issue of reconciliation.dateIssues) {
+      addFlag(
+        issue.rowId,
+        issue.kind === 'outside-period'
+          ? 'Date is far from the rest of the statement'
+          : 'Out of order relative to the surrounding rows',
+      );
+    }
+
+    return map;
+  }, [reconciliation]);
+
+  const {
+    options: exportOptions,
+    setOptions: setExportOptions,
+    exportAs,
+  } = useExport(fileName, editableRows, rowFlags, reconciliation, pageIntegrity.length);
+
+  useEffect(() => {
+    if (!hasEdits) return;
+    const handler = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [hasEdits]);
+
+  const confirmIfUnsaved = useCallback(() => {
+    if (!hasEdits) return true;
+    return window.confirm(UNSAVED_EDITS_MESSAGE);
+  }, [hasEdits]);
+
+  const handleReset = useCallback(() => {
+    if (!confirmIfUnsaved()) return;
+    reset();
+  }, [confirmIfUnsaved, reset]);
+
+  const handleFileSelected = useCallback(
+    (file: File) => {
+      if (!confirmIfUnsaved()) return;
+      loadFile(file);
+    },
+    [confirmIfUnsaved, loadFile],
+  );
 
   const statusText = extractionProgress
     ? `Reading PDF… (page ${extractionProgress.done} of ${extractionProgress.total})`
@@ -58,7 +160,7 @@ function App() {
       <main className="flex flex-col gap-6">
         {!fileName && (
           <FileDropzone
-            onFileSelected={loadFile}
+            onFileSelected={handleFileSelected}
             isLoading={isLoadingFile}
             statusText={statusText}
           />
@@ -83,13 +185,38 @@ function App() {
                 />
                 <button
                   type="button"
-                  onClick={reset}
+                  onClick={handleReset}
                   className="rounded-md border border-line-strong px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:border-accent"
                 >
                   Choose a different file
                 </button>
               </div>
             </div>
+
+            <ReconciliationPanel
+              rowCount={editableRows.length}
+              result={reconciliation}
+              onOpeningChange={setOpeningBalanceInput}
+              onClosingChange={setClosingBalanceInput}
+            />
+
+            <TransactionGrid
+              rows={editableRows}
+              onCommitEdit={commitEdit}
+              onDeleteRow={deleteRow}
+              onInsertRow={insertRow}
+              canUndo={canUndo}
+              canRedo={canRedo}
+              onUndo={undo}
+              onRedo={redo}
+              rowFlags={rowFlags}
+            />
+
+            <ExportPanel
+              options={exportOptions}
+              onOptionsChange={setExportOptions}
+              onExport={exportAs}
+            />
 
             <IntegrityReport
               pageIntegrity={pageIntegrity}

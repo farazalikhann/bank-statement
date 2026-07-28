@@ -102,8 +102,14 @@ export function stripPatternFurniture(
 }
 
 // Phase 2 (runs after merge, both within-page and cross-page): whatever
-// still has only one non-empty cell and no amount never found a
-// transaction to attach to, so it's stray text rather than page furniture.
+// still has neither a date nor an amount never found a transaction to
+// attach to, so it's stray text rather than page furniture. This also
+// catches a page-specific header row that stripPatternFurniture's
+// repeated-across-pages check can miss — e.g. a page whose column count
+// doesn't match the rest of the document has its own differently-shaped
+// header text, which never repeats anywhere else and so never matches
+// that check — since a real transaction always has a date or an amount,
+// checking cell count alone (the previous rule) wasn't enough.
 export function dropOrphanRows(
   rows: CleanedRow[],
 ): { kept: CleanedRow[]; dropped: DroppedRow[] } {
@@ -111,11 +117,9 @@ export function dropOrphanRows(
   const dropped: DroppedRow[] = [];
 
   for (const row of rows) {
-    const nonEmptyCells = row.cells.filter((cell) => cell.trim());
+    const hasDate = row.cells.some((cell) => isDateLike(cell));
     const isOrphan =
-      nonEmptyCells.length <= 1 &&
-      !rowHasAmount(row.cells) &&
-      !looksLikeSummaryLine(row.cells);
+      !hasDate && !rowHasAmount(row.cells) && !looksLikeSummaryLine(row.cells);
     if (isOrphan) {
       dropped.push({ cells: row.cells, reason: 'single-cell-no-amount' });
     } else {

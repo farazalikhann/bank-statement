@@ -35,6 +35,16 @@ export function stitchCrossPageRows(
     if (rowHasAmount(firstRow.cells) || looksLikeSummaryLine(firstRow.cells)) {
       continue;
     }
+    // A no-amount first row only counts as a wrapped continuation if the
+    // rest of that page actually contains transactions — otherwise (e.g. a
+    // page that's pure disclosure text with zero real rows) it's page
+    // furniture that just didn't match the repeated-header/footer check,
+    // and folding it into the previous page's last transaction would
+    // corrupt that transaction's description instead of dropping the text
+    // as furniture like it should be.
+    if (!nextPage.some((row) => rowHasAmount(row.cells))) {
+      continue;
+    }
 
     const extraText = firstRow.cells
       .filter((cell) => cell.trim())

@@ -17,6 +17,7 @@ import { PdfProcessingError } from '../lib/pdf/errors';
 import type {
   CleanedRow,
   ColumnRole,
+  DroppedRow,
   PageExtraction,
   RawRow,
 } from '../lib/pdf/types';
@@ -29,12 +30,26 @@ import type {
   ConfidenceLevel,
   DateFieldOrder,
   PageIntegrity,
+  StatementSummary,
   SummaryItem,
   Transaction,
 } from '../lib/transactions/types';
 
 const DEFAULT_TOLERANCE_Y = 2;
 const DEFAULT_GAP_X = 10;
+
+// Stable empty-array references for the "no document loaded yet" case —
+// a fresh `[]` literal on every render would change identity each time,
+// which breaks anything that depends on these in a useEffect dependency
+// array (e.g. useEditableTransactions' re-seed effect), causing it to fire
+// every render instead of only when the data actually changes.
+const EMPTY_ROLES: ColumnRole[] = [];
+const EMPTY_TRANSACTIONS: Transaction[] = [];
+const EMPTY_INDICES: number[] = [];
+const EMPTY_PAGE_INTEGRITY: PageIntegrity[] = [];
+const EMPTY_CLEANED_ROWS: CleanedRow[] = [];
+const EMPTY_DROPPED_ROWS: DroppedRow[] = [];
+const EMPTY_STATEMENT_SUMMARY: StatementSummary = { items: [] };
 
 function roleConfidence(
   role: ColumnRole,
@@ -302,6 +317,7 @@ export function usePdfExtraction() {
       perPageEffectiveRoles,
       columnShape,
       dateFormatInfo,
+      fallbackYear,
       transactionsByPage,
       transactionRowIndicesByPage: perPageTransactionRowIndices,
       transactions,
@@ -315,11 +331,11 @@ export function usePdfExtraction() {
   const currentPageIndex = currentPageNumber - 1;
 
   const columnRoles = useMemo(
-    () => documentTransactions?.perPageEffectiveRoles[currentPageIndex] ?? [],
+    () => documentTransactions?.perPageEffectiveRoles[currentPageIndex] ?? EMPTY_ROLES,
     [documentTransactions, currentPageIndex],
   );
   const currentPageTransactions = useMemo(
-    () => documentTransactions?.transactionsByPage[currentPageIndex] ?? [],
+    () => documentTransactions?.transactionsByPage[currentPageIndex] ?? EMPTY_TRANSACTIONS,
     [documentTransactions, currentPageIndex],
   );
 
@@ -332,7 +348,8 @@ export function usePdfExtraction() {
     );
 
     const rowIndices =
-      documentTransactions?.transactionRowIndicesByPage[currentPageIndex] ?? [];
+      documentTransactions?.transactionRowIndicesByPage[currentPageIndex] ??
+      EMPTY_INDICES;
     rowIndices.forEach((originalIndex, i) => {
       const transaction = currentPageTransactions[i];
       if (!transaction || originalIndex >= result.length) return;
@@ -370,19 +387,20 @@ export function usePdfExtraction() {
     gapX,
     setGapX,
     rawStats: currentPage?.rawStats ?? null,
-    cleanedRows: currentPage?.kept ?? ([] as CleanedRow[]),
-    droppedRows: currentPage?.dropped ?? [],
+    cleanedRows: currentPage?.kept ?? EMPTY_CLEANED_ROWS,
+    droppedRows: currentPage?.dropped ?? EMPTY_DROPPED_ROWS,
     columnRoles,
     setColumnRoleOverride,
     dateFormatInfo: documentTransactions?.dateFormatInfo ?? null,
+    fallbackYear: documentTransactions?.fallbackYear ?? null,
     setDateFormatOverride,
     columnShape: documentTransactions?.columnShape ?? null,
     transactionOrder: documentTransactions?.transactionOrder ?? 'unknown',
-    transactions: documentTransactions?.transactions ?? [],
+    transactions: documentTransactions?.transactions ?? EMPTY_TRANSACTIONS,
     currentPageTransactions,
     currentPageConfidence,
-    pageIntegrity: documentTransactions?.pageIntegrity ?? [],
-    statementSummary: documentTransactions?.statementSummary ?? { items: [] },
+    pageIntegrity: documentTransactions?.pageIntegrity ?? EMPTY_PAGE_INTEGRITY,
+    statementSummary: documentTransactions?.statementSummary ?? EMPTY_STATEMENT_SUMMARY,
     loadFile,
     reset,
   };
