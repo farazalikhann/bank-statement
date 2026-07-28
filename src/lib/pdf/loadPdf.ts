@@ -22,8 +22,20 @@ export async function loadPdf(file: File): Promise<PDFDocumentProxy> {
   const { getDocument, PasswordException, InvalidPDFException } =
     await getPdfjs();
 
+  // Statements using non-embedded base-14 fonts (Helvetica/Times/Courier —
+  // extremely common) need these on disk or getDocument() throws entirely.
+  // Must be built from BASE_URL, not a leading-slash absolute path — this
+  // app deploys under /bank-statement/, and a hardcoded "/standard_fonts/"
+  // would 404 there.
+  const base = import.meta.env.BASE_URL;
+
   try {
-    const loadingTask = getDocument({ data });
+    const loadingTask = getDocument({
+      data,
+      standardFontDataUrl: `${base}standard_fonts/`,
+      cMapUrl: `${base}cmaps/`,
+      cMapPacked: true,
+    });
     return await loadingTask.promise;
   } catch (error) {
     if (error instanceof PasswordException) {
