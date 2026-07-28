@@ -38,7 +38,10 @@ import type {
 } from '../lib/transactions/types';
 
 const DEFAULT_TOLERANCE_Y = 2;
-const DEFAULT_GAP_X = 10;
+// Tuned to sit above normal character/word kerning (~1-4px) but below a
+// real column gutter — the whitespace-projection column detector treats any
+// gap wider than this as a column boundary (see detectColumns.ts).
+const DEFAULT_GAP_X = 6;
 
 // Stable empty-array references for the "no document loaded yet" case —
 // a fresh `[]` literal on every render would change identity each time,

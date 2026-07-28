@@ -8,6 +8,11 @@ const MATCH_THRESHOLD = 0.6;
 // requirement.
 const ZERO_OR_NULL_REJECTION_THRESHOLD = 0.3;
 const EMPTY_REJECTION_THRESHOLD = 0.3;
+// Below this many consecutive-row balance checks, there isn't enough
+// evidence to override the default "rightmost column is Balance"
+// convention — matches the MIN_STRONG_VOTES bar used for the analogous
+// Debit/Credit disambiguation in detectColumnShape.ts.
+const MIN_BALANCE_EVIDENCE_ROWS = 3;
 
 interface ColumnStats {
   index: number;
@@ -40,6 +45,33 @@ function computeColumnStats(rows: CleanedRow[], columnCount: number): ColumnStat
   }
 
   return stats;
+}
+
+// Counts how often previousBalance + amount == currentBalance across
+// consecutive rows for a candidate (amountIndex, balanceIndex) pairing —
+// the arithmetic ground truth for which of two amount-shaped columns is
+// really the running balance, rather than guessing from column position.
+function balanceConsistencyEvidence(
+  rows: CleanedRow[],
+  amountIndex: number,
+  balanceIndex: number,
+): { checked: number; rate: number } {
+  let checked = 0;
+  let consistent = 0;
+  let previousBalance: number | null = null;
+
+  for (const row of rows) {
+    const balance = parseCurrencyAmount(row.cells[balanceIndex]?.trim() ?? '');
+    const amount = parseCurrencyAmount(row.cells[amountIndex]?.trim() ?? '');
+
+    if (previousBalance !== null && balance !== null && amount !== null) {
+      checked += 1;
+      if (Math.abs(previousBalance + amount - balance) < 0.01) consistent += 1;
+    }
+    if (balance !== null) previousBalance = balance;
+  }
+
+  return { checked, rate: checked === 0 ? 0 : consistent / checked };
 }
 
 // A real Amount column is essentially never mostly-zero/unparseable. If a
@@ -95,7 +127,27 @@ export function detectColumnRoles(
     assigned.add(candidate.index);
   }
   if (qualifiedAmountColumns.length > 1) {
-    roles[qualifiedAmountColumns[qualifiedAmountColumns.length - 1].index] = 'balance';
+    // Default convention: rightmost qualified column is Balance. But when
+    // there are exactly two candidates, arithmetic evidence beats position
+    // — if the running-balance check clearly favors the *other* column,
+    // the default guess is wrong (e.g. columns merged/reordered upstream)
+    // and gets corrected here instead of silently shipping swapped roles.
+    let balanceIndex = qualifiedAmountColumns[qualifiedAmountColumns.length - 1].index;
+
+    if (qualifiedAmountColumns.length === 2) {
+      const [left, right] = qualifiedAmountColumns.map((c) => c.index);
+      const rightIsBalance = balanceConsistencyEvidence(rows, left, right);
+      const leftIsBalance = balanceConsistencyEvidence(rows, right, left);
+
+      if (
+        leftIsBalance.checked >= MIN_BALANCE_EVIDENCE_ROWS &&
+        leftIsBalance.rate > rightIsBalance.rate
+      ) {
+        balanceIndex = left;
+      }
+    }
+
+    roles[balanceIndex] = 'balance';
   }
 
   // Description: prefer the most alphabetic-content column among what's
