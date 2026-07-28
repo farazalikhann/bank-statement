@@ -16,6 +16,9 @@ import { TransactionGrid } from './components/TransactionGrid';
 import { ReconciliationPanel } from './components/ReconciliationPanel';
 import { ExportPanel } from './components/ExportPanel';
 import { ColumnDetectionWarning } from './components/ColumnDetectionWarning';
+import type { ColumnRole } from './lib/pdf/types';
+
+const isDebug = new URLSearchParams(window.location.search).get('debug') === '1';
 
 function formatMoney(value: number): string {
   return Math.abs(value).toLocaleString(undefined, {
@@ -143,6 +146,19 @@ function App() {
     [confirmIfUnsaved, loadFile],
   );
 
+  const handleColumnRoleReassign = useCallback(
+    (field: ColumnRole, newIndex: number) => {
+      const oldIndex = columnRoles.indexOf(field);
+      if (oldIndex === newIndex) return;
+      // A single-instance role (date/description/balance/amount) never
+      // ends up assigned to two columns at once — clear the old holder
+      // before handing the role to its new column.
+      if (oldIndex >= 0) setColumnRoleOverride(oldIndex, 'unknown');
+      setColumnRoleOverride(newIndex, field);
+    },
+    [columnRoles, setColumnRoleOverride],
+  );
+
   const statusText = extractionProgress
     ? `Reading PDF… (page ${extractionProgress.done} of ${extractionProgress.total})`
     : undefined;
@@ -195,7 +211,7 @@ function App() {
               </div>
             </div>
 
-            {columnDetectionWarning && (
+            {isDebug && columnDetectionWarning && (
               <ColumnDetectionWarning message={columnDetectionWarning} />
             )}
 
@@ -216,6 +232,10 @@ function App() {
               onUndo={undo}
               onRedo={redo}
               rowFlags={rowFlags}
+              columnRoles={columnRoles}
+              columnShape={columnShape}
+              onColumnRoleReassign={handleColumnRoleReassign}
+              debug={isDebug}
             />
 
             <ExportPanel
@@ -224,38 +244,42 @@ function App() {
               onExport={exportAs}
             />
 
-            <IntegrityReport
-              pageIntegrity={pageIntegrity}
-              statementSummary={statementSummary}
-            />
+            {isDebug && (
+              <>
+                <IntegrityReport
+                  pageIntegrity={pageIntegrity}
+                  statementSummary={statementSummary}
+                />
 
-            <ControlsPanel
-              toleranceY={toleranceY}
-              onToleranceYChange={setToleranceY}
-              gapX={gapX}
-              onGapXChange={setGapX}
-            />
+                <ControlsPanel
+                  toleranceY={toleranceY}
+                  onToleranceYChange={setToleranceY}
+                  gapX={gapX}
+                  onGapXChange={setGapX}
+                />
 
-            {rawStats && <StatsBar stats={rawStats} />}
+                {rawStats && <StatsBar stats={rawStats} />}
 
-            {dateFormatInfo && columnShape && (
-              <ParsingSummary
-                dateFormatInfo={dateFormatInfo}
-                onDateFormatChange={setDateFormatOverride}
-                columnShape={columnShape}
-                transactionOrder={transactionOrder}
-                currentPageTransactions={currentPageTransactions}
-              />
+                {dateFormatInfo && columnShape && (
+                  <ParsingSummary
+                    dateFormatInfo={dateFormatInfo}
+                    onDateFormatChange={setDateFormatOverride}
+                    columnShape={columnShape}
+                    transactionOrder={transactionOrder}
+                    currentPageTransactions={currentPageTransactions}
+                  />
+                )}
+
+                <ExtractedTable
+                  cleanedRows={cleanedRows}
+                  columnRoles={columnRoles}
+                  onRoleChange={setColumnRoleOverride}
+                  confidenceByCell={currentPageConfidence}
+                />
+
+                <DroppedRowsPanel droppedRows={droppedRows} />
+              </>
             )}
-
-            <ExtractedTable
-              cleanedRows={cleanedRows}
-              columnRoles={columnRoles}
-              onRoleChange={setColumnRoleOverride}
-              confidenceByCell={currentPageConfidence}
-            />
-
-            <DroppedRowsPanel droppedRows={droppedRows} />
           </>
         )}
       </main>

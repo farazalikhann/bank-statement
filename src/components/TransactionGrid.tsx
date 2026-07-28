@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { useVirtualRows } from '../hooks/useVirtualRows';
 import type { EditableField, EditableTransaction } from '../hooks/useEditableTransactions';
+import type { ColumnRole } from '../lib/pdf/types';
+import type { ColumnShape } from '../lib/transactions/types';
 import { TransactionGridToolbar } from './TransactionGridToolbar';
 import { TransactionDetailPanel } from './TransactionDetailPanel';
 
@@ -19,6 +21,15 @@ interface TransactionGridProps {
   // since these are whole-row concerns (a balance break isn't "wrong" in
   // one cell) rather than a single field's parse confidence.
   rowFlags?: Map<string, string[]>;
+  // Raw-column role state for the header's "which column is this field"
+  // pickers, and the column shape that decides whether Amount even has a
+  // single source column to point at.
+  columnRoles: ColumnRole[];
+  columnShape: ColumnShape | null;
+  onColumnRoleReassign: (field: ColumnRole, newIndex: number) => void;
+  // Gates the source-traceability ("Raw: ...") detail panel — a debug-only
+  // view now, not part of the default customer screen.
+  debug: boolean;
 }
 
 const FIELDS: EditableField[] = ['date', 'description', 'amount', 'balance'];
@@ -93,6 +104,13 @@ function cellKey(rowId: string, field: EditableField): string {
   return `${rowId}:${field}`;
 }
 
+const FIELD_HEADER_LABEL: Record<EditableField, string> = {
+  date: 'Date',
+  description: 'Description',
+  amount: 'Amount',
+  balance: 'Balance',
+};
+
 export function TransactionGrid({
   rows,
   onCommitEdit,
@@ -103,6 +121,10 @@ export function TransactionGrid({
   onUndo,
   onRedo,
   rowFlags,
+  columnRoles,
+  columnShape,
+  onColumnRoleReassign,
+  debug,
 }: TransactionGridProps) {
   const [selected, setSelected] = useState<SelectedCell | null>(null);
   const [editing, setEditing] = useState<EditingCell | null>(null);
@@ -330,18 +352,46 @@ export function TransactionGrid({
             </colgroup>
             <thead className="sticky top-0 bg-canvas">
               <tr>
-                <th className="border-b border-line px-3 py-2 text-left font-sans font-medium text-ink-muted">
-                  Date
-                </th>
-                <th className="border-b border-line px-3 py-2 text-left font-sans font-medium text-ink-muted">
-                  Description
-                </th>
-                <th className="border-b border-line px-3 py-2 text-right font-sans font-medium text-ink-muted">
-                  Amount
-                </th>
-                <th className="border-b border-line px-3 py-2 text-right font-sans font-medium text-ink-muted">
-                  Balance
-                </th>
+                {FIELDS.map((field) => {
+                  const alignClass =
+                    field === 'amount' || field === 'balance' ? 'text-right' : 'text-left';
+                  // Amount has no single source column to point at once
+                  // Debit/Credit are two separate raw columns merged into
+                  // one signed value — reassigning only makes sense for
+                  // the single-signed-column shape.
+                  const disabled =
+                    field === 'amount' && columnShape?.kind === 'debit-credit';
+                  const currentIndex = columnRoles.indexOf(field);
+                  return (
+                    <th
+                      key={field}
+                      className={`border-b border-line px-3 py-2 font-sans font-medium text-ink-muted ${alignClass}`}
+                    >
+                      <div
+                        className={`flex items-center gap-1.5 ${field === 'amount' || field === 'balance' ? 'justify-end' : ''}`}
+                      >
+                        <span>{FIELD_HEADER_LABEL[field]}</span>
+                        {!disabled && columnRoles.length > 0 && (
+                          <select
+                            value={currentIndex}
+                            onChange={(event) =>
+                              onColumnRoleReassign(field, Number(event.target.value))
+                            }
+                            aria-label={`Which column is ${FIELD_HEADER_LABEL[field]}`}
+                            className="rounded border border-line-strong bg-surface px-1 py-0.5 text-xs font-medium text-ink"
+                          >
+                            {currentIndex < 0 && <option value={-1}>—</option>}
+                            {columnRoles.map((_, index) => (
+                              <option key={index} value={index}>
+                                Col {index + 1}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                    </th>
+                  );
+                })}
                 <th className="border-b border-line px-2 py-2" aria-hidden="true" />
               </tr>
             </thead>
@@ -476,7 +526,7 @@ export function TransactionGrid({
         </div>
       )}
 
-      <TransactionDetailPanel row={selectedRow} />
+      {debug && <TransactionDetailPanel row={selectedRow} />}
     </div>
   );
 }

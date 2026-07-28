@@ -12,6 +12,7 @@ import {
 } from '../lib/pdf/filterJunkRows';
 import { stitchCrossPageRows } from '../lib/pdf/stitchCrossPageRows';
 import { detectColumnRoles } from '../lib/pdf/detectColumnRoles';
+import { recoverMergedDateColumn } from '../lib/pdf/recoverMergedDateColumn';
 import { looksLikeSummaryLine } from '../lib/pdf/textPatterns';
 import { PdfProcessingError, wrapStageError } from '../lib/pdf/errors';
 import type {
@@ -326,12 +327,29 @@ export function usePdfExtraction() {
         () => refineColumnRoles(cleanup.rowsForRoleDetection, cleanup.documentColumnRoles),
       );
 
-      const perPageEffectiveRoles: ColumnRole[][] = cleanup.perPage.map((page) =>
+      const rawPerPageEffectiveRoles: ColumnRole[][] = cleanup.perPage.map((page) =>
         page.columns.map((_, index) => {
           const override = columnRoleOverrides[index];
           if (override) return override;
           return refinedRoles[index] ?? 'unknown';
         }),
+      );
+
+      // Last-resort recovery: if column detection still couldn't separate
+      // Date from Description (roles/columns look fine otherwise, but Date
+      // is mostly empty while Description visibly starts with a date most
+      // of the time), split it back out here rather than shipping merged
+      // text. A no-op for the common case where Date is already its own
+      // column.
+      const correctedPerPage = cleanup.perPage.map((page, pageIndex) => {
+        const { rows: kept, roles: effectiveRoles } = recoverMergedDateColumn(
+          page.kept,
+          rawPerPageEffectiveRoles[pageIndex],
+        );
+        return { ...page, kept, effectiveRoles };
+      });
+      const perPageEffectiveRoles: ColumnRole[][] = correctedPerPage.map(
+        (page) => page.effectiveRoles,
       );
 
       const { summaryItems, perPageTransactionRows, perPageTransactionRowIndices } =
@@ -344,7 +362,7 @@ export function usePdfExtraction() {
           // onto the right row of the raw per-page table, since summary
           // rows are excluded here but not there.
           const perPageTransactionRowIndices: number[][] = [];
-          cleanup.perPage.forEach((page, pageIndex) => {
+          correctedPerPage.forEach((page, pageIndex) => {
             const dateIndex = perPageEffectiveRoles[pageIndex].indexOf('date');
             const { items, remainingRows, remainingIndices } = extractSummaryBlocks(
               page.kept,
@@ -377,7 +395,7 @@ export function usePdfExtraction() {
         'typing-failed',
         'Building transactions failed',
         () =>
-          cleanup.perPage.map((page, pageIndex) =>
+          correctedPerPage.map((page, pageIndex) =>
             buildTransactions(
               perPageTransactionRows[pageIndex],
               perPageEffectiveRoles[pageIndex],

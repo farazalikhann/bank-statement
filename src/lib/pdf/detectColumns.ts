@@ -1,5 +1,5 @@
 import type { Row, ColumnCluster, ColumnDetectionOptions } from './types';
-import { isDateLike } from './textPatterns';
+import { isDateLike, parseCurrencyAmount } from './textPatterns';
 import { mapRowToColumns } from './mapRowToColumns';
 
 const MAX_PLAUSIBLE_COLUMNS = 8;
@@ -28,31 +28,22 @@ function isLikelyHeaderRow(row: Row): boolean {
   return matches >= 2;
 }
 
-function mostCommonItemCount(rows: Row[]): number {
-  const counts = new Map<number, number>();
-  for (const row of rows) {
-    counts.set(row.items.length, (counts.get(row.items.length) ?? 0) + 1);
-  }
-  let best = 0;
-  let bestVotes = -1;
-  for (const [count, votes] of counts) {
-    if (votes > bestVotes) {
-      bestVotes = votes;
-      best = count;
-    }
-  }
-  return best;
-}
-
-// A preamble line (account number, "Opening Balance: 4,182.55") is often a
-// single wide, un-split text blob rather than several separately-positioned
-// cells — and that one blob can span the gap between two real columns,
-// bridging them in the projection even though no actual transaction row
-// ever does. Excluding rows whose item count is far below the page's
-// typical row shape keeps this kind of noise out of the sample entirely.
-function looksLikeTabularRow(row: Row, typicalItemCount: number): boolean {
-  if (typicalItemCount <= 1) return true;
-  return row.items.length >= Math.max(2, Math.ceil(typicalItemCount / 2));
+// A preamble/summary line (account number, "Opening Balance: 4,182.55") is
+// often a single wide, un-split text blob rather than several separately-
+// positioned cells — and that one blob can span the gap between two real
+// columns, bridging them in the projection even though no actual
+// transaction row ever does. Requiring both a date-shaped token AND a
+// currency-shaped token is a precise, direct qualifier for "this is a real
+// transaction row" — a preamble line never has both (a "Statement Period:
+// X to Y" line has two dates but no amount; an "Opening Balance: N" line
+// has an amount but no date), so this excludes exactly the noise that
+// would otherwise distort the projection.
+function isTransactionRow(row: Row): boolean {
+  const hasDate = row.items.some((item) => isDateLike(item.text.trim()));
+  const hasCurrency = row.items.some(
+    (item) => parseCurrencyAmount(item.text.trim()) !== null,
+  );
+  return hasDate && hasCurrency;
 }
 
 // Merges each item's full [start, end] interval (not just its start point),
@@ -123,9 +114,15 @@ export function detectColumns(
   { gapX }: ColumnDetectionOptions,
 ): ColumnCluster[] {
   const headerRow = rows.find(isLikelyHeaderRow) ?? null;
-  const withoutHeader = headerRow ? rows.filter((row) => row !== headerRow) : rows;
-  const typicalItemCount = mostCommonItemCount(withoutHeader);
-  const dataRows = withoutHeader.filter((row) => looksLikeTabularRow(row, typicalItemCount));
+  const transactionRows = rows.filter(isTransactionRow);
+  // Fall back to "everything but the header" only if nothing qualified as
+  // a transaction row at all — an edge-case layout where a date and its
+  // amount never land on the same raw row before merging — rather than
+  // handing the projection an empty sample.
+  const dataRows =
+    transactionRows.length > 0
+      ? transactionRows
+      : rows.filter((row) => row !== headerRow);
 
   let currentGap = gapX;
   let columns = clusterByRange(dataRows, currentGap);
