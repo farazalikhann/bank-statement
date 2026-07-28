@@ -1,8 +1,11 @@
 import { groupRows } from './groupRows';
 import { detectColumns } from './detectColumns';
+import { wrapStageError } from './errors';
 import type {
   TextItem,
   AnalyzedPage,
+  Row,
+  ColumnCluster,
   RowGroupingOptions,
   ColumnDetectionOptions,
 } from './types';
@@ -24,9 +27,29 @@ export function analyzePage(
   items: TextItem[],
   rowOptions: RowGroupingOptions,
   columnOptions: ColumnDetectionOptions,
+  pageNumber: number,
 ): AnalyzedPage {
-  const rows = groupRows(items, rowOptions);
-  const columns = detectColumns(rows, columnOptions);
+  let rows: Row[];
+  try {
+    rows = groupRows(items, rowOptions);
+  } catch (err) {
+    throw wrapStageError(
+      'row-grouping-failed',
+      `Row grouping failed on page ${pageNumber}`,
+      err,
+    );
+  }
+
+  let columns: ColumnCluster[];
+  try {
+    columns = detectColumns(rows, columnOptions);
+  } catch (err) {
+    throw wrapStageError(
+      'column-detection-failed',
+      `Column detection failed on page ${pageNumber}`,
+      err,
+    );
+  }
 
   const rowCount = rows.length;
   const matchingRows = mostCommonCellCountFrequency(rows);

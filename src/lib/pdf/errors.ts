@@ -2,7 +2,12 @@ export type PdfErrorKind =
   | 'password-protected'
   | 'no-text-layer'
   | 'invalid-file'
-  | 'load-failed';
+  | 'load-failed'
+  | 'text-extraction-failed'
+  | 'row-grouping-failed'
+  | 'column-detection-failed'
+  | 'role-assignment-failed'
+  | 'typing-failed';
 
 export class PdfProcessingError extends Error {
   readonly kind: PdfErrorKind;
@@ -14,13 +19,16 @@ export class PdfProcessingError extends Error {
   }
 }
 
-export const PDF_ERROR_MESSAGES: Record<PdfErrorKind, string> = {
-  'password-protected':
-    'This PDF is password-protected. Open it in your PDF viewer, enter the password, then save or export an unlocked copy (in Adobe Acrobat: File → Print → Save as PDF; in Preview on Mac: File → Export). Upload that copy instead.',
-  'no-text-layer':
-    'This PDF has no extractable text — it appears to be a scanned image rather than a digital statement. Scanned PDFs need OCR (optical character recognition) to convert, which is not supported yet.',
-  'invalid-file':
-    'That file is not a PDF. Please upload a PDF export or download of your bank statement (usually a .pdf file from your bank’s website or app).',
-  'load-failed':
-    'This PDF could not be read. It may be corrupted or use an unsupported format. Try re-downloading it from your bank and upload again.',
-};
+// Every internal-pipeline stage boundary uses this to turn an unexpected
+// throw into a user-facing error that names the stage and carries the real
+// underlying reason, instead of a bucketed generic message — and to log the
+// full original error (stack included) so it's not lost.
+export function wrapStageError(
+  kind: PdfErrorKind,
+  context: string,
+  err: unknown,
+): PdfProcessingError {
+  console.error(`[StatementKit] ${context}:`, err);
+  const detail = err instanceof Error ? err.message : String(err);
+  return new PdfProcessingError(kind, `${context}: ${detail}`);
+}
