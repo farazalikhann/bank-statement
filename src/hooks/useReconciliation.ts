@@ -19,10 +19,16 @@ export function useReconciliation(
     setManualClosing(null);
   }, [fileName]);
 
+  // Opening balance: take the *first* occurrence — the document's true
+  // starting balance appears on page 1. Closing balance: take the *last*
+  // occurrence — a multi-page statement often recaps a running "closing
+  // balance" on every page, and only the final page's is the document's
+  // actual closing balance.
   const summaryOpening =
     statementSummary.items.find((item) => item.kind === 'opening-balance')?.value ?? null;
   const summaryClosing =
-    statementSummary.items.find((item) => item.kind === 'closing-balance')?.value ?? null;
+    [...statementSummary.items].reverse().find((item) => item.kind === 'closing-balance')
+      ?.value ?? null;
 
   const openingBalance = manualOpening ?? summaryOpening;
   const openingSource = manualOpening !== null ? 'manual' : summaryOpening !== null ? 'summary' : null;

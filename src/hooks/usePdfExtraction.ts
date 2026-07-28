@@ -304,6 +304,20 @@ export function usePdfExtraction() {
     const transactions = transactionsByPage.flat();
     const transactionOrder = detectTransactionOrder(transactions);
 
+    // If column detection landed on the wrong column, the Amount field
+    // reads as 0.00 across most rows — never show that silently, say so.
+    // Requires a minimum sample size so a handful of legitimately blank
+    // amounts (e.g. a lone opening-balance row) on a very short statement
+    // doesn't misfire this warning — the 30% rate is only meaningful once
+    // there's enough rows for it to reflect a real pattern.
+    const MIN_TRANSACTIONS_FOR_SANITY_CHECK = 5;
+    const zeroAmountCount = transactions.filter((t) => t.amount === 0).length;
+    const columnDetectionWarning =
+      transactions.length >= MIN_TRANSACTIONS_FOR_SANITY_CHECK &&
+      zeroAmountCount / transactions.length > 0.3
+        ? 'Column detection looks wrong for this statement — check the column labels above the table.'
+        : null;
+
     const pageIntegrity: PageIntegrity[] = documentCleanup.perPage.map(
       (page, pageIndex) => ({
         pageNumber: pageIndex + 1,
@@ -324,6 +338,7 @@ export function usePdfExtraction() {
       transactionOrder,
       pageIntegrity,
       statementSummary: { items: summaryItems },
+      columnDetectionWarning,
     };
   }, [documentCleanup, columnRoleOverrides, dateFormatOverride]);
 
@@ -401,6 +416,7 @@ export function usePdfExtraction() {
     currentPageConfidence,
     pageIntegrity: documentTransactions?.pageIntegrity ?? EMPTY_PAGE_INTEGRITY,
     statementSummary: documentTransactions?.statementSummary ?? EMPTY_STATEMENT_SUMMARY,
+    columnDetectionWarning: documentTransactions?.columnDetectionWarning ?? null,
     loadFile,
     reset,
   };

@@ -15,6 +15,7 @@ import { IntegrityReport } from './components/IntegrityReport';
 import { TransactionGrid } from './components/TransactionGrid';
 import { ReconciliationPanel } from './components/ReconciliationPanel';
 import { ExportPanel } from './components/ExportPanel';
+import { ColumnDetectionWarning } from './components/ColumnDetectionWarning';
 
 function formatMoney(value: number): string {
   return Math.abs(value).toLocaleString(undefined, {
@@ -54,6 +55,7 @@ function App() {
     currentPageConfidence,
     pageIntegrity,
     statementSummary,
+    columnDetectionWarning,
     loadFile,
     reset,
   } = usePdfExtraction();
@@ -192,6 +194,10 @@ function App() {
                 </button>
               </div>
             </div>
+
+            {columnDetectionWarning && (
+              <ColumnDetectionWarning message={columnDetectionWarning} />
+            )}
 
             <ReconciliationPanel
               rowCount={editableRows.length}
