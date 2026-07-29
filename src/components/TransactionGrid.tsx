@@ -4,7 +4,19 @@ import { useVirtualRows } from '../hooks/useVirtualRows';
 import type { EditableField, EditableTransaction } from '../hooks/useEditableTransactions';
 import type { ColumnRole } from '../lib/pdf/types';
 import type { ColumnShape } from '../lib/transactions/types';
-import { EDITABLE_FIELDS, isFieldFlagged } from '../lib/editableTransactionFlags';
+import type { ExportOptions } from '../lib/export/types';
+import { selectRows } from '../lib/export/rowSelection';
+import { isFieldFlagged } from '../lib/editableTransactionFlags';
+import {
+  DISPLAY_COLUMN_LABEL,
+  computeDisplayColumns,
+  getDisplayValue,
+  getEditValue,
+  getOriginalDisplay,
+  resolveEditCommit,
+  underlyingFieldFor,
+  type DisplayColumn,
+} from '../lib/transactionDisplay';
 import { TransactionGridToolbar } from './TransactionGridToolbar';
 import { TransactionDetailPanel } from './TransactionDetailPanel';
 
@@ -32,6 +44,10 @@ interface TransactionGridProps {
   columnPreviews: string[];
   columnShape: ColumnShape | null;
   onColumnRoleReassign: (field: ColumnRole, newIndex: number) => void;
+  // Output settings — which columns show, date format, signed vs split
+  // amount, and whether flagged rows are included. The table renders
+  // exactly what these say, live, same as the export would produce.
+  options: ExportOptions;
   // "View as table" mode on narrow screens: the table becomes horizontally
   // scrollable with the Date column pinned so there's always date context
   // regardless of scroll position. No effect on desktop, which never sets
@@ -39,80 +55,41 @@ interface TransactionGridProps {
   freezeDateColumn?: boolean;
 }
 
-const FIELDS = EDITABLE_FIELDS;
 const ROW_HEIGHT = 36;
+const EMPTY_ROW_FLAGS: Map<string, string[]> = new Map();
+
+const COLUMN_WIDTH: Partial<Record<DisplayColumn, string>> = {
+  date: '130px',
+  debit: '110px',
+  credit: '110px',
+  amount: '130px',
+  balance: '130px',
+  pageNumber: '90px',
+};
 
 interface SelectedCell {
   rowId: string;
-  field: EditableField;
+  field: DisplayColumn;
 }
 
 interface EditingCell extends SelectedCell {
   value: string;
 }
 
-function formatAmount(value: number): string {
-  return value.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
-function getDisplayValue(row: EditableTransaction, field: EditableField): string {
-  switch (field) {
-    case 'date':
-      return row.date || '—';
-    case 'description':
-      return row.description || '—';
-    case 'amount':
-      return formatAmount(row.amount);
-    case 'balance':
-      return row.balance === null ? '—' : formatAmount(row.balance);
-  }
-}
-
-function getEditValue(row: EditableTransaction, field: EditableField): string {
-  switch (field) {
-    case 'date':
-      return row.date;
-    case 'description':
-      return row.description;
-    case 'amount':
-      return String(row.amount);
-    case 'balance':
-      return row.balance === null ? '' : String(row.balance);
-  }
-}
-
-function getOriginalDisplay(
-  row: EditableTransaction,
-  field: EditableField,
-): string | null {
-  if (!row.original || !row.edited[field]) return null;
-  switch (field) {
-    case 'date':
-      return row.original.date || '(none)';
-    case 'description':
-      return row.original.description || '(none)';
-    case 'amount':
-      return formatAmount(row.original.amount);
-    case 'balance':
-      return row.original.balance === null
-        ? '(none)'
-        : formatAmount(row.original.balance);
-  }
-}
-
-function cellKey(rowId: string, field: EditableField): string {
+function cellKey(rowId: string, field: DisplayColumn): string {
   return `${rowId}:${field}`;
 }
 
-const FIELD_HEADER_LABEL: Record<EditableField, string> = {
-  date: 'Date',
-  description: 'Description',
-  amount: 'Amount',
-  balance: 'Balance',
-};
+// Amount has no single source column to point at once Debit/Credit are two
+// separate raw columns merged into one signed value; the reverse is true
+// when the statement never had separate debit/credit columns at all — the
+// split shown here is a display-only computation, not a real column to
+// reassign.
+function isFixColumnDisabled(column: DisplayColumn, columnShape: ColumnShape | null): boolean {
+  if (column === 'amount') return columnShape?.kind === 'debit-credit';
+  if (column === 'debit' || column === 'credit') return columnShape?.kind !== 'debit-credit';
+  return false;
+}
 
 export function TransactionGrid({
   rows,
@@ -128,6 +105,7 @@ export function TransactionGrid({
   columnPreviews,
   columnShape,
   onColumnRoleReassign,
+  options,
   freezeDateColumn = false,
 }: TransactionGridProps) {
   const [selected, setSelected] = useState<SelectedCell | null>(null);
@@ -142,6 +120,17 @@ export function TransactionGrid({
   const suppressNextBlurRef = useRef(false);
   const cellRefs = useRef(new Map<string, HTMLTableCellElement>());
 
+  const effectiveRowFlags = rowFlags ?? EMPTY_ROW_FLAGS;
+
+  const displayColumns = useMemo(() => computeDisplayColumns(options), [options]);
+
+  // Same helper the export uses — the table can never show a different set
+  // of rows than what "include flagged" would actually export.
+  const visibleRows = useMemo(
+    () => selectRows(rows, effectiveRowFlags, options),
+    [rows, effectiveRowFlags, options],
+  );
+
   const {
     containerRef,
     startIndex,
@@ -150,7 +139,20 @@ export function TransactionGrid({
     bottomSpacerHeight,
     onScroll,
     scrollToIndex,
-  } = useVirtualRows({ rowCount: rows.length, rowHeight: ROW_HEIGHT });
+  } = useVirtualRows({ rowCount: visibleRows.length, rowHeight: ROW_HEIGHT });
+
+  // If the selected/editing cell's row or column drops out from under it
+  // (a column gets hidden mid-edit, or the row gets filtered out), nothing
+  // should keep pointing at a cell that no longer renders.
+  useEffect(() => {
+    if (!selected) return;
+    const rowStillVisible = visibleRows.some((r) => r.id === selected.rowId);
+    const columnStillVisible = displayColumns.includes(selected.field);
+    if (!rowStillVisible || !columnStillVisible) {
+      setSelected(null);
+      setEditing(null);
+    }
+  }, [visibleRows, displayColumns, selected]);
 
   // Deliberately keyed on rowId/field, not the whole `editing` object: this
   // should only focus/select when a *new* cell starts editing, not on every
@@ -174,19 +176,22 @@ export function TransactionGrid({
   }, [selected, editing]);
 
   const startEditing = useCallback(
-    (rowId: string, field: EditableField, selectAll: boolean) => {
-      const row = rows.find((r) => r.id === rowId);
+    (rowId: string, field: DisplayColumn, selectAll: boolean) => {
+      if (!underlyingFieldFor(field)) return; // pageNumber: not editable
+      const row = visibleRows.find((r) => r.id === rowId);
       if (!row) return;
       selectAllOnFocusRef.current = selectAll;
       setEditError(false);
       setEditing({ rowId, field, value: getEditValue(row, field) });
     },
-    [rows],
+    [visibleRows],
   );
 
   const commitCurrentEdit = useCallback((): boolean => {
     if (!editing) return true;
-    const ok = onCommitEdit(editing.rowId, editing.field, editing.value);
+    const resolved = resolveEditCommit(editing.field, editing.value);
+    if (!resolved) return true;
+    const ok = onCommitEdit(editing.rowId, resolved.field, resolved.value);
     if (ok) {
       setEditing(null);
       setEditError(false);
@@ -198,19 +203,19 @@ export function TransactionGrid({
 
   const moveSelectionTo = useCallback(
     (rowIndex: number, fieldIndex: number, enterEdit: boolean, selectAll: boolean) => {
-      if (rowIndex < 0 || rowIndex >= rows.length) return;
-      if (fieldIndex < 0 || fieldIndex >= FIELDS.length) return;
-      const row = rows[rowIndex];
-      const field = FIELDS[fieldIndex];
+      if (rowIndex < 0 || rowIndex >= visibleRows.length) return;
+      if (fieldIndex < 0 || fieldIndex >= displayColumns.length) return;
+      const row = visibleRows[rowIndex];
+      const field = displayColumns[fieldIndex];
       setSelected({ rowId: row.id, field });
       scrollToIndex(rowIndex);
       if (enterEdit) startEditing(row.id, field, selectAll);
     },
-    [rows, scrollToIndex, startEditing],
+    [visibleRows, displayColumns, scrollToIndex, startEditing],
   );
 
   const handleCellClick = useCallback(
-    (rowId: string, field: EditableField) => {
+    (rowId: string, field: DisplayColumn) => {
       setSelected({ rowId, field });
       startEditing(rowId, field, true);
     },
@@ -262,7 +267,7 @@ export function TransactionGrid({
         const ok = commitCurrentEdit();
         suppressNextBlurRef.current = false;
         if (!ok) return;
-        moveSelectionTo(rowIndex + 1, fieldIndex, rowIndex + 1 < rows.length, false);
+        moveSelectionTo(rowIndex + 1, fieldIndex, rowIndex + 1 < visibleRows.length, false);
         return;
       }
 
@@ -276,16 +281,16 @@ export function TransactionGrid({
         let nextField = fieldIndex + delta;
         let nextRow = rowIndex;
         if (nextField < 0) {
-          nextField = FIELDS.length - 1;
+          nextField = displayColumns.length - 1;
           nextRow -= 1;
-        } else if (nextField >= FIELDS.length) {
+        } else if (nextField >= displayColumns.length) {
           nextField = 0;
           nextRow += 1;
         }
-        moveSelectionTo(nextRow, nextField, nextRow >= 0 && nextRow < rows.length, true);
+        moveSelectionTo(nextRow, nextField, nextRow >= 0 && nextRow < visibleRows.length, true);
       }
     },
-    [commitCurrentEdit, moveSelectionTo, rows.length],
+    [commitCurrentEdit, moveSelectionTo, visibleRows.length, displayColumns.length],
   );
 
   const handleInputBlur = useCallback(() => {
@@ -293,43 +298,58 @@ export function TransactionGrid({
     commitCurrentEdit();
   }, [commitCurrentEdit]);
 
+  // Debit and credit share one underlying `amount` — dedupe by field so a
+  // flagged amount counts once regardless of whether it's shown as one
+  // column or split into two.
+  const visibleUnderlyingFields = useMemo(() => {
+    const fields = new Set<EditableField>();
+    for (const column of displayColumns) {
+      const field = underlyingFieldFor(column);
+      if (field) fields.add(field);
+    }
+    return [...fields];
+  }, [displayColumns]);
+
   const flaggedCount = useMemo(() => {
     let count = 0;
-    for (const row of rows) {
-      for (const field of FIELDS) {
+    for (const row of visibleRows) {
+      for (const field of visibleUnderlyingFields) {
         if (isFieldFlagged(row, field)) count += 1;
       }
     }
     return count;
-  }, [rows]);
+  }, [visibleRows, visibleUnderlyingFields]);
 
   const jumpToNextFlagged = useCallback(() => {
-    const total = rows.length * FIELDS.length;
+    const total = visibleRows.length * displayColumns.length;
     if (total === 0) return;
-    const currentRowIndex = selected ? rows.findIndex((r) => r.id === selected.rowId) : -1;
-    const currentFieldIndex = selected ? FIELDS.indexOf(selected.field) : -1;
-    const currentFlat = currentRowIndex < 0 ? -1 : currentRowIndex * FIELDS.length + currentFieldIndex;
+    const currentRowIndex = selected ? visibleRows.findIndex((r) => r.id === selected.rowId) : -1;
+    const currentFieldIndex = selected ? displayColumns.indexOf(selected.field) : -1;
+    const currentFlat =
+      currentRowIndex < 0 ? -1 : currentRowIndex * displayColumns.length + currentFieldIndex;
 
     for (let step = 1; step <= total; step++) {
       const flat = (currentFlat + step + total) % total;
-      const rowIndex = Math.floor(flat / FIELDS.length);
-      const fieldIndex = flat % FIELDS.length;
-      const row = rows[rowIndex];
-      const field = FIELDS[fieldIndex];
-      if (isFieldFlagged(row, field)) {
-        setSelected({ rowId: row.id, field });
+      const rowIndex = Math.floor(flat / displayColumns.length);
+      const fieldIndex = flat % displayColumns.length;
+      const row = visibleRows[rowIndex];
+      const column = displayColumns[fieldIndex];
+      const field = underlyingFieldFor(column);
+      if (field && isFieldFlagged(row, field)) {
+        setSelected({ rowId: row.id, field: column });
         scrollToIndex(rowIndex);
         return;
       }
     }
-  }, [rows, selected, scrollToIndex]);
+  }, [visibleRows, displayColumns, selected, scrollToIndex]);
 
-  const selectedRow = selected ? rows.find((r) => r.id === selected.rowId) ?? null : null;
+  const selectedRow = selected ? visibleRows.find((r) => r.id === selected.rowId) ?? null : null;
+  const colCount = displayColumns.length + 1; // + the actions column
 
   return (
     <div className="flex flex-col gap-3">
       <TransactionGridToolbar
-        rowCount={rows.length}
+        rowCount={visibleRows.length}
         flaggedCount={flaggedCount}
         onJumpNext={jumpToNextFlagged}
         canUndo={canUndo}
@@ -349,9 +369,18 @@ export function TransactionGrid({
         </button>
       )}
 
-      {rows.length === 0 ? (
+      {displayColumns.length === 0 ? (
+        <div className="flex items-center justify-center rounded-md border border-line bg-surface p-12 text-sm text-ink-muted">
+          No columns selected — turn one on in Output above.
+        </div>
+      ) : rows.length === 0 ? (
         <div className="flex items-center justify-center rounded-md border border-line bg-surface p-12 text-sm text-ink-muted">
           No transactions yet. Use "+ Add row" to add one.
+        </div>
+      ) : visibleRows.length === 0 ? (
+        <div className="flex items-center justify-center rounded-md border border-line bg-surface p-12 text-sm text-ink-muted">
+          All rows are hidden by the current filter — check "Include rows
+          still flagged for review" in Output.
         </div>
       ) : (
         <div
@@ -363,43 +392,51 @@ export function TransactionGrid({
             className={`border-collapse text-sm ${freezeDateColumn ? 'w-max min-w-full table-fixed' : 'w-full table-fixed'}`}
           >
             <colgroup>
-              <col style={{ width: '130px' }} />
-              <col style={freezeDateColumn ? { width: '220px' } : undefined} />
-              <col style={{ width: '130px' }} />
-              <col style={{ width: '130px' }} />
+              {displayColumns.map((column) => (
+                <col
+                  key={column}
+                  style={
+                    column === 'description'
+                      ? freezeDateColumn
+                        ? { width: '220px' }
+                        : undefined
+                      : { width: COLUMN_WIDTH[column] }
+                  }
+                />
+              ))}
               <col style={{ width: '56px' }} />
             </colgroup>
             <thead className="sticky top-0 bg-canvas">
               <tr>
-                {FIELDS.map((field) => {
+                {displayColumns.map((column) => {
                   const alignClass =
-                    field === 'amount' || field === 'balance' ? 'text-right' : 'text-left';
-                  // Amount has no single source column to point at once
-                  // Debit/Credit are two separate raw columns merged into
-                  // one signed value — reassigning only makes sense for
-                  // the single-signed-column shape.
-                  const disabled =
-                    field === 'amount' && columnShape?.kind === 'debit-credit';
-                  const currentIndex = columnRoles.indexOf(field);
-                  const frozen = freezeDateColumn && field === 'date';
+                    column === 'amount' || column === 'debit' || column === 'credit' || column === 'balance'
+                      ? 'text-right'
+                      : 'text-left';
+                  const disabled = isFixColumnDisabled(column, columnShape);
+                  const currentIndex =
+                    column === 'pageNumber' ? -1 : columnRoles.indexOf(column as ColumnRole);
+                  const frozen = freezeDateColumn && column === 'date';
+                  const showPicker =
+                    showColumnFixer && !disabled && columnRoles.length > 0 && column !== 'pageNumber';
                   return (
                     <th
-                      key={field}
+                      key={column}
                       className={`border-b border-line px-3 py-2 font-sans font-medium text-ink-muted ${alignClass} ${
                         frozen ? 'sticky left-0 z-10 border-r border-line bg-canvas' : ''
                       }`}
                     >
                       <div
-                        className={`flex items-center gap-1.5 ${field === 'amount' || field === 'balance' ? 'justify-end' : ''}`}
+                        className={`flex items-center gap-1.5 ${alignClass === 'text-right' ? 'justify-end' : ''}`}
                       >
-                        <span>{FIELD_HEADER_LABEL[field]}</span>
-                        {showColumnFixer && !disabled && columnRoles.length > 0 && (
+                        <span>{DISPLAY_COLUMN_LABEL[column]}</span>
+                        {showPicker && (
                           <select
                             value={currentIndex}
                             onChange={(event) =>
-                              onColumnRoleReassign(field, Number(event.target.value))
+                              onColumnRoleReassign(column as ColumnRole, Number(event.target.value))
                             }
-                            aria-label={`Which column is ${FIELD_HEADER_LABEL[field]}`}
+                            aria-label={`Which column is ${DISPLAY_COLUMN_LABEL[column]}`}
                             className="max-w-28 rounded border border-line-strong bg-surface px-1 py-0.5 text-xs font-medium text-ink"
                           >
                             {currentIndex < 0 && <option value={-1}>—</option>}
@@ -419,9 +456,9 @@ export function TransactionGrid({
             </thead>
             <tbody>
               <tr style={{ height: topSpacerHeight }} aria-hidden="true">
-                <td colSpan={5} className="p-0" />
+                <td colSpan={colCount} className="p-0" />
               </tr>
-              {rows.slice(startIndex, endIndex).map((row, i) => {
+              {visibleRows.slice(startIndex, endIndex).map((row, i) => {
                 const rowIndex = startIndex + i;
                 const isRowSelected = selected?.rowId === row.id;
                 return (
@@ -430,24 +467,27 @@ export function TransactionGrid({
                     style={{ height: ROW_HEIGHT }}
                     className={isRowSelected ? 'bg-accent-soft/40' : ''}
                   >
-                    {FIELDS.map((field, fieldIndex) => {
+                    {displayColumns.map((column, fieldIndex) => {
+                      const underlyingField = underlyingFieldFor(column);
                       const isEditing =
-                        editing?.rowId === row.id && editing.field === field;
+                        editing?.rowId === row.id && editing.field === column;
                       const isSelected =
-                        selected?.rowId === row.id && selected.field === field;
-                      const flagged = isFieldFlagged(row, field);
-                      const original = getOriginalDisplay(row, field);
+                        selected?.rowId === row.id && selected.field === column;
+                      const flagged = underlyingField
+                        ? isFieldFlagged(row, underlyingField)
+                        : false;
+                      const original = getOriginalDisplay(row, column);
                       const alignClass =
-                        field === 'amount' || field === 'balance'
+                        column === 'amount' || column === 'debit' || column === 'credit' || column === 'balance'
                           ? 'text-right'
                           : 'text-left';
-                      const frozen = freezeDateColumn && field === 'date';
+                      const frozen = freezeDateColumn && column === 'date';
                       const frozenBg = isRowSelected ? 'bg-accent-soft' : 'bg-surface';
 
                       if (isEditing) {
                         return (
                           <td
-                            key={field}
+                            key={column}
                             className={`border-b border-line p-0 ${frozen ? `sticky left-0 z-10 border-r ${frozenBg}` : ''}`}
                           >
                             <input
@@ -471,19 +511,21 @@ export function TransactionGrid({
 
                       return (
                         <td
-                          key={field}
+                          key={column}
                           ref={(el) => {
-                            if (el) cellRefs.current.set(cellKey(row.id, field), el);
-                            else cellRefs.current.delete(cellKey(row.id, field));
+                            if (el) cellRefs.current.set(cellKey(row.id, column), el);
+                            else cellRefs.current.delete(cellKey(row.id, column));
                           }}
                           tabIndex={0}
-                          onClick={() => handleCellClick(row.id, field)}
+                          onClick={() => handleCellClick(row.id, column)}
                           onKeyDown={(e) => handleCellKeyDown(e, rowIndex, fieldIndex)}
-                          onFocus={() => setSelected({ rowId: row.id, field })}
+                          onFocus={() => setSelected({ rowId: row.id, field: column })}
                           title={original ? `Originally: ${original}` : undefined}
-                          className={`cursor-text overflow-hidden text-ellipsis whitespace-nowrap border-b border-line px-3 py-1.5 font-mono text-sm text-ink ${alignClass} ${
-                            isSelected ? 'ring-2 ring-inset ring-accent' : ''
-                          } ${frozen ? `sticky left-0 z-10 border-r ${frozenBg}` : ''}`}
+                          className={`overflow-hidden text-ellipsis whitespace-nowrap border-b border-line px-3 py-1.5 font-mono text-sm text-ink ${alignClass} ${
+                            underlyingField ? 'cursor-text' : 'cursor-default text-ink-muted'
+                          } ${isSelected ? 'ring-2 ring-inset ring-accent' : ''} ${
+                            frozen ? `sticky left-0 z-10 border-r ${frozenBg}` : ''
+                          }`}
                         >
                           <span
                             className={
@@ -492,9 +534,9 @@ export function TransactionGrid({
                                 : ''
                             }
                           >
-                            {getDisplayValue(row, field)}
+                            {getDisplayValue(row, column, options.dateFormat)}
                           </span>
-                          {row.edited[field] && (
+                          {underlyingField && row.edited[underlyingField] && (
                             <span
                               aria-hidden="true"
                               className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-accent align-middle"
@@ -506,7 +548,7 @@ export function TransactionGrid({
                     <td className="border-b border-line px-1 py-1.5 text-center">
                       <div className="flex items-center justify-center gap-1">
                         {(() => {
-                          const issues = rowFlags?.get(row.id);
+                          const issues = effectiveRowFlags.get(row.id);
                           if (!issues || issues.length === 0) return null;
                           return (
                             <span
@@ -546,7 +588,7 @@ export function TransactionGrid({
                 );
               })}
               <tr style={{ height: bottomSpacerHeight }} aria-hidden="true">
-                <td colSpan={5} className="p-0" />
+                <td colSpan={colCount} className="p-0" />
               </tr>
             </tbody>
           </table>

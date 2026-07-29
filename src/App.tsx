@@ -14,9 +14,11 @@ import { ParsingSummary } from './components/ParsingSummary';
 import { IntegrityReport } from './components/IntegrityReport';
 import { TransactionsSection } from './components/TransactionsSection';
 import { ReconciliationPanel } from './components/ReconciliationPanel';
-import { ExportPanel } from './components/ExportPanel';
+import { OutputPanel } from './components/OutputPanel';
 import { ColumnDetectionWarning } from './components/ColumnDetectionWarning';
 import type { ColumnRole } from './lib/pdf/types';
+import { isFieldFlagged } from './lib/editableTransactionFlags';
+import { selectRows } from './lib/export/rowSelection';
 
 const isDebug = new URLSearchParams(window.location.search).get('debug') === '1';
 
@@ -118,6 +120,27 @@ function App() {
     exportAs,
     lastExport,
   } = useExport(fileName, editableRows, rowFlags, reconciliation, pageIntegrity.length);
+
+  // One shared definition of "hidden by filter" — the Output panel's count
+  // and the table's own live filtering both come from the same rows, so
+  // they can never disagree.
+  const rowsAfterFilter = useMemo(
+    () => selectRows(editableRows, rowFlags, exportOptions),
+    [editableRows, rowFlags, exportOptions],
+  );
+  const hiddenRowCount = editableRows.length - rowsAfterFilter.length;
+
+  const flaggedInHiddenColumnsCount = useMemo(() => {
+    const { columns } = exportOptions;
+    let count = 0;
+    for (const row of rowsAfterFilter) {
+      if (!columns.date && isFieldFlagged(row, 'date')) count += 1;
+      if (!columns.description && isFieldFlagged(row, 'description')) count += 1;
+      if (!columns.amount && isFieldFlagged(row, 'amount')) count += 1;
+      if (!columns.balance && isFieldFlagged(row, 'balance')) count += 1;
+    }
+    return count;
+  }, [rowsAfterFilter, exportOptions]);
 
   useEffect(() => {
     if (!hasEdits) return;
@@ -244,6 +267,15 @@ function App() {
               onClosingChange={setClosingBalanceInput}
             />
 
+            <OutputPanel
+              options={exportOptions}
+              onOptionsChange={setExportOptions}
+              onExport={exportAs}
+              lastExport={lastExport}
+              hiddenRowCount={hiddenRowCount}
+              flaggedInHiddenColumnsCount={flaggedInHiddenColumnsCount}
+            />
+
             <TransactionsSection
               fileName={fileName}
               rows={editableRows}
@@ -261,13 +293,7 @@ function App() {
               onColumnRoleReassign={handleColumnRoleReassign}
               reconciliation={reconciliation}
               onExport={exportAs}
-            />
-
-            <ExportPanel
               options={exportOptions}
-              onOptionsChange={setExportOptions}
-              onExport={exportAs}
-              lastExport={lastExport}
             />
 
             {isDebug && (

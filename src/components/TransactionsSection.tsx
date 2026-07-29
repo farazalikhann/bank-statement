@@ -4,6 +4,7 @@ import type { ColumnRole } from '../lib/pdf/types';
 import type { ColumnShape } from '../lib/transactions/types';
 import type { ReconciliationResult } from '../lib/validation/types';
 import type { ExportFormat } from '../hooks/useExport';
+import type { ExportOptions } from '../lib/export/types';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { collectFlaggedFields } from '../lib/editableTransactionFlags';
 import { TransactionGrid } from './TransactionGrid';
@@ -28,6 +29,11 @@ interface TransactionsSectionProps {
   onColumnRoleReassign: (field: ColumnRole, newIndex: number) => void;
   reconciliation: ReconciliationResult;
   onExport: (format: ExportFormat) => void;
+  // Output settings — passed straight through to TransactionGrid (desktop,
+  // and mobile's "view as table") so the table renders exactly what these
+  // say. The card list and Review Mode don't take this — they're a
+  // deliberately different, column-agnostic interaction model.
+  options: ExportOptions;
 }
 
 type MobileView = 'review' | 'cards' | 'table';
@@ -54,6 +60,7 @@ export function TransactionsSection({
   onColumnRoleReassign,
   reconciliation,
   onExport,
+  options,
 }: TransactionsSectionProps) {
   const isMobile = useMediaQuery('(max-width: 767px)');
   const [view, setView] = useState<MobileView>('cards');
@@ -89,6 +96,7 @@ export function TransactionsSection({
         columnPreviews={columnPreviews}
         columnShape={columnShape}
         onColumnRoleReassign={onColumnRoleReassign}
+        options={options}
       />
     );
   }
@@ -142,6 +150,7 @@ export function TransactionsSection({
             columnPreviews={columnPreviews}
             columnShape={columnShape}
             onColumnRoleReassign={onColumnRoleReassign}
+            options={options}
             freezeDateColumn
           />
         </>

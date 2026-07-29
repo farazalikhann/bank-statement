@@ -1,11 +1,17 @@
 import type { ExportColumns, ExportDateFormat, ExportOptions } from '../lib/export/types';
 import { formatExportSummary, type ExportFormat, type ExportSummary } from '../hooks/useExport';
 
-interface ExportPanelProps {
+interface OutputPanelProps {
   options: ExportOptions;
   onOptionsChange: (options: ExportOptions) => void;
   onExport: (format: ExportFormat) => void;
   lastExport: ExportSummary | null;
+  // Rows currently hidden from the table by "include flagged", and flagged
+  // fields sitting in a column that's currently turned off — both direct
+  // consequences of the settings below, so they're shown right here rather
+  // than discovered later at export time.
+  hiddenRowCount: number;
+  flaggedInHiddenColumnsCount: number;
 }
 
 const COLUMN_LABELS: { key: keyof ExportColumns; label: string }[] = [
@@ -22,13 +28,22 @@ const DATE_FORMAT_OPTIONS: { value: ExportDateFormat; label: string }[] = [
   { value: 'ISO', label: 'YYYY-MM-DD (ISO)' },
 ];
 
-export function ExportPanel({ options, onOptionsChange, onExport, lastExport }: ExportPanelProps) {
+export function OutputPanel({
+  options,
+  onOptionsChange,
+  onExport,
+  lastExport,
+  hiddenRowCount,
+  flaggedInHiddenColumnsCount,
+}: OutputPanelProps) {
   const setColumn = (key: keyof ExportColumns, value: boolean) => {
     onOptionsChange({ ...options, columns: { ...options.columns, [key]: value } });
   };
 
   return (
     <div className="flex flex-col gap-4 rounded-md border border-line bg-surface p-4">
+      <h2 className="font-heading text-base font-semibold text-ink">Output</h2>
+
       {lastExport && (
         <p className="flex items-center gap-2 rounded-md border border-accent bg-accent-soft px-3 py-2 text-sm font-medium text-ink">
           <svg
@@ -117,8 +132,20 @@ export function ExportPanel({ options, onOptionsChange, onExport, lastExport }: 
             />
             Include rows still flagged for review
           </label>
+          {hiddenRowCount > 0 && (
+            <span className="text-sm text-ink-muted">
+              {hiddenRowCount} row{hiddenRowCount === 1 ? '' : 's'} hidden by filter
+            </span>
+          )}
         </div>
       </div>
+
+      {flaggedInHiddenColumnsCount > 0 && (
+        <p className="rounded-md border border-warn-line bg-warn-soft px-3 py-2 text-sm text-ink">
+          {flaggedInHiddenColumnsCount} flagged field
+          {flaggedInHiddenColumnsCount === 1 ? ' is' : 's are'} in hidden columns.
+        </p>
+      )}
 
       <div className="flex flex-wrap gap-2 border-t border-line pt-3">
         <button
@@ -150,6 +177,10 @@ export function ExportPanel({ options, onOptionsChange, onExport, lastExport }: 
           Export Xero CSV
         </button>
       </div>
+
+      <p className="text-sm text-ink-muted">
+        The table below shows exactly what will be exported.
+      </p>
     </div>
   );
 }
