@@ -116,6 +116,7 @@ function App() {
     options: exportOptions,
     setOptions: setExportOptions,
     exportAs,
+    lastExport,
   } = useExport(fileName, editableRows, rowFlags, reconciliation, pageIntegrity.length);
 
   useEffect(() => {
@@ -195,11 +196,16 @@ function App() {
 
       <main className="flex flex-col gap-6">
         {!fileName && (
-          <FileDropzone
-            onFileSelected={handleFileSelected}
-            isLoading={isLoadingFile}
-            statusText={statusText}
-          />
+          <div className="flex flex-col gap-4">
+            <p className="text-center font-heading text-lg font-medium text-ink">
+              Drop a statement. Get verified Excel. Nothing uploads.
+            </p>
+            <FileDropzone
+              onFileSelected={handleFileSelected}
+              isLoading={isLoadingFile}
+              statusText={statusText}
+            />
+          </div>
         )}
 
         {error && <ErrorMessage error={error} onDismiss={reset} />}
@@ -261,6 +267,7 @@ function App() {
               options={exportOptions}
               onOptionsChange={setExportOptions}
               onExport={exportAs}
+              lastExport={lastExport}
             />
 
             {isDebug && (

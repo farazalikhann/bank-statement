@@ -1,10 +1,11 @@
 import type { ExportColumns, ExportDateFormat, ExportOptions } from '../lib/export/types';
-import type { ExportFormat } from '../hooks/useExport';
+import { formatExportSummary, type ExportFormat, type ExportSummary } from '../hooks/useExport';
 
 interface ExportPanelProps {
   options: ExportOptions;
   onOptionsChange: (options: ExportOptions) => void;
   onExport: (format: ExportFormat) => void;
+  lastExport: ExportSummary | null;
 }
 
 const COLUMN_LABELS: { key: keyof ExportColumns; label: string }[] = [
@@ -21,13 +22,30 @@ const DATE_FORMAT_OPTIONS: { value: ExportDateFormat; label: string }[] = [
   { value: 'ISO', label: 'YYYY-MM-DD (ISO)' },
 ];
 
-export function ExportPanel({ options, onOptionsChange, onExport }: ExportPanelProps) {
+export function ExportPanel({ options, onOptionsChange, onExport, lastExport }: ExportPanelProps) {
   const setColumn = (key: keyof ExportColumns, value: boolean) => {
     onOptionsChange({ ...options, columns: { ...options.columns, [key]: value } });
   };
 
   return (
     <div className="flex flex-col gap-4 rounded-md border border-line bg-surface p-4">
+      {lastExport && (
+        <p className="flex items-center gap-2 rounded-md border border-accent bg-accent-soft px-3 py-2 text-sm font-medium text-ink">
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            className="h-5 w-5 shrink-0 text-accent"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <circle cx="12" cy="12" r="9" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="m8.5 12.5 2.5 2.5 4.5-5" />
+          </svg>
+          {formatExportSummary(lastExport)}
+        </p>
+      )}
+
       <div className="flex flex-wrap gap-6">
         <fieldset className="flex flex-col gap-1.5">
           <legend className="mb-0.5 text-sm text-ink-muted">Columns</legend>

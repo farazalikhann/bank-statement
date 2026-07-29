@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { EditableTransaction } from './useEditableTransactions';
 import type { ReconciliationResult } from '../lib/validation/types';
 import { DEFAULT_EXPORT_OPTIONS, type ExportOptions } from '../lib/export/types';
@@ -46,6 +46,29 @@ function buildWarningMessage(
   return `Before exporting: ${issues.join(' and ')}. Export anyway?`;
 }
 
+export interface ExportSummary {
+  count: number;
+  minutesSaved: number;
+}
+
+// A rough, illustrative estimate — not a claim of measured typing speed,
+// just enough to make "this saved you time" concrete rather than abstract.
+const MINUTES_PER_TRANSACTION = 1;
+
+function formatDuration(minutes: number): string {
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  const hourText = `${hours} hour${hours === 1 ? '' : 's'}`;
+  return remainder === 0
+    ? hourText
+    : `${hourText} ${remainder} minute${remainder === 1 ? '' : 's'}`;
+}
+
+export function formatExportSummary(summary: ExportSummary): string {
+  return `${summary.count} transaction${summary.count === 1 ? '' : 's'} exported — about ${formatDuration(summary.minutesSaved)} of manual typing saved.`;
+}
+
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -65,6 +88,13 @@ export function useExport(
   pageCount: number,
 ) {
   const [options, setOptions] = useState<ExportOptions>(DEFAULT_EXPORT_OPTIONS);
+  const [lastExport, setLastExport] = useState<ExportSummary | null>(null);
+
+  // A completion state from a previous statement shouldn't linger once
+  // that statement is gone.
+  useEffect(() => {
+    setLastExport(null);
+  }, [fileName]);
 
   const exportAs = useCallback(
     (format: ExportFormat) => {
@@ -73,24 +103,33 @@ export function useExport(
       if (warning && !window.confirm(warning)) return;
 
       const sourceName = fileName ?? 'statement';
+      const selectedCount = selectRows(rows, rowFlags, options).length;
+      const recordExport = () => {
+        setLastExport({
+          count: selectedCount,
+          minutesSaved: selectedCount * MINUTES_PER_TRANSACTION,
+        });
+      };
 
       if (format === 'csv') {
         const csv = buildGenericCsv(rows, rowFlags, options);
         downloadBlob(buildCsvBlob(csv), generateFilename(sourceName, 'csv'));
+        recordExport();
         return;
       }
       if (format === 'quickbooks') {
         const csv = buildQuickBooksCsv(rows, rowFlags, options);
         downloadBlob(buildCsvBlob(csv), generateFilename(sourceName, 'csv', 'quickbooks'));
+        recordExport();
         return;
       }
       if (format === 'xero') {
         const csv = buildXeroCsv(rows, rowFlags, options);
         downloadBlob(buildCsvBlob(csv), generateFilename(sourceName, 'csv', 'xero'));
+        recordExport();
         return;
       }
 
-      const selectedCount = selectRows(rows, rowFlags, options).length;
       const editedCellCount = rows.reduce(
         (sum, row) => sum + Object.values(row.edited).filter(Boolean).length,
         0,
@@ -105,10 +144,11 @@ export function useExport(
       };
       void buildWorkbookBlob(rows, rowFlags, options, audit).then((blob) => {
         downloadBlob(blob, generateFilename(sourceName, 'xlsx'));
+        recordExport();
       });
     },
     [rows, rowFlags, reconciliation, options, fileName, pageCount],
   );
 
-  return { options, setOptions, exportAs };
+  return { options, setOptions, exportAs, lastExport };
 }
