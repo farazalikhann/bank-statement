@@ -4,6 +4,7 @@ import { useVirtualRows } from '../hooks/useVirtualRows';
 import type { EditableField, EditableTransaction } from '../hooks/useEditableTransactions';
 import type { ColumnRole } from '../lib/pdf/types';
 import type { ColumnShape } from '../lib/transactions/types';
+import { EDITABLE_FIELDS, isFieldFlagged } from '../lib/editableTransactionFlags';
 import { TransactionGridToolbar } from './TransactionGridToolbar';
 import { TransactionDetailPanel } from './TransactionDetailPanel';
 
@@ -25,14 +26,20 @@ interface TransactionGridProps {
   // pickers, and the column shape that decides whether Amount even has a
   // single source column to point at.
   columnRoles: ColumnRole[];
+  // First non-empty data value per raw column index — shown in the column
+  // picker instead of an internal "Column N" label, since that's what a
+  // user actually recognizes a column by.
+  columnPreviews: string[];
   columnShape: ColumnShape | null;
   onColumnRoleReassign: (field: ColumnRole, newIndex: number) => void;
-  // Gates the source-traceability ("Raw: ...") detail panel — a debug-only
-  // view now, not part of the default customer screen.
-  debug: boolean;
+  // "View as table" mode on narrow screens: the table becomes horizontally
+  // scrollable with the Date column pinned so there's always date context
+  // regardless of scroll position. No effect on desktop, which never sets
+  // this — desktop's layout stays exactly as it was.
+  freezeDateColumn?: boolean;
 }
 
-const FIELDS: EditableField[] = ['date', 'description', 'amount', 'balance'];
+const FIELDS = EDITABLE_FIELDS;
 const ROW_HEIGHT = 36;
 
 interface SelectedCell {
@@ -42,10 +49,6 @@ interface SelectedCell {
 
 interface EditingCell extends SelectedCell {
   value: string;
-}
-
-function isFlagged(row: EditableTransaction, field: EditableField): boolean {
-  return !row.edited[field] && row.confidence[field] !== 'high';
 }
 
 function formatAmount(value: number): string {
@@ -122,13 +125,17 @@ export function TransactionGrid({
   onRedo,
   rowFlags,
   columnRoles,
+  columnPreviews,
   columnShape,
   onColumnRoleReassign,
-  debug,
+  freezeDateColumn = false,
 }: TransactionGridProps) {
   const [selected, setSelected] = useState<SelectedCell | null>(null);
   const [editing, setEditing] = useState<EditingCell | null>(null);
   const [editError, setEditError] = useState(false);
+  // Off by default — when detection is already right (the common case),
+  // a row of raw-column pickers above the data is pure noise.
+  const [showColumnFixer, setShowColumnFixer] = useState(false);
 
   const editInputRef = useRef<HTMLInputElement>(null);
   const selectAllOnFocusRef = useRef(false);
@@ -290,7 +297,7 @@ export function TransactionGrid({
     let count = 0;
     for (const row of rows) {
       for (const field of FIELDS) {
-        if (isFlagged(row, field)) count += 1;
+        if (isFieldFlagged(row, field)) count += 1;
       }
     }
     return count;
@@ -309,7 +316,7 @@ export function TransactionGrid({
       const fieldIndex = flat % FIELDS.length;
       const row = rows[rowIndex];
       const field = FIELDS[fieldIndex];
-      if (isFlagged(row, field)) {
+      if (isFieldFlagged(row, field)) {
         setSelected({ rowId: row.id, field });
         scrollToIndex(rowIndex);
         return;
@@ -332,6 +339,16 @@ export function TransactionGrid({
         onAddRow={() => onInsertRow(null)}
       />
 
+      {columnRoles.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setShowColumnFixer((prev) => !prev)}
+          className="self-end text-sm font-medium text-accent hover:underline"
+        >
+          {showColumnFixer ? 'Done fixing columns' : 'Fix columns'}
+        </button>
+      )}
+
       {rows.length === 0 ? (
         <div className="flex items-center justify-center rounded-md border border-line bg-surface p-12 text-sm text-ink-muted">
           No transactions yet. Use "+ Add row" to add one.
@@ -342,10 +359,12 @@ export function TransactionGrid({
           onScroll={onScroll}
           className="max-h-[60vh] overflow-auto rounded-md border border-line bg-surface"
         >
-          <table className="w-full table-fixed border-collapse text-sm">
+          <table
+            className={`border-collapse text-sm ${freezeDateColumn ? 'w-max min-w-full table-fixed' : 'w-full table-fixed'}`}
+          >
             <colgroup>
               <col style={{ width: '130px' }} />
-              <col />
+              <col style={freezeDateColumn ? { width: '220px' } : undefined} />
               <col style={{ width: '130px' }} />
               <col style={{ width: '130px' }} />
               <col style={{ width: '56px' }} />
@@ -362,28 +381,31 @@ export function TransactionGrid({
                   const disabled =
                     field === 'amount' && columnShape?.kind === 'debit-credit';
                   const currentIndex = columnRoles.indexOf(field);
+                  const frozen = freezeDateColumn && field === 'date';
                   return (
                     <th
                       key={field}
-                      className={`border-b border-line px-3 py-2 font-sans font-medium text-ink-muted ${alignClass}`}
+                      className={`border-b border-line px-3 py-2 font-sans font-medium text-ink-muted ${alignClass} ${
+                        frozen ? 'sticky left-0 z-10 border-r border-line bg-canvas' : ''
+                      }`}
                     >
                       <div
                         className={`flex items-center gap-1.5 ${field === 'amount' || field === 'balance' ? 'justify-end' : ''}`}
                       >
                         <span>{FIELD_HEADER_LABEL[field]}</span>
-                        {!disabled && columnRoles.length > 0 && (
+                        {showColumnFixer && !disabled && columnRoles.length > 0 && (
                           <select
                             value={currentIndex}
                             onChange={(event) =>
                               onColumnRoleReassign(field, Number(event.target.value))
                             }
                             aria-label={`Which column is ${FIELD_HEADER_LABEL[field]}`}
-                            className="rounded border border-line-strong bg-surface px-1 py-0.5 text-xs font-medium text-ink"
+                            className="max-w-28 rounded border border-line-strong bg-surface px-1 py-0.5 text-xs font-medium text-ink"
                           >
                             {currentIndex < 0 && <option value={-1}>—</option>}
                             {columnRoles.map((_, index) => (
                               <option key={index} value={index}>
-                                Col {index + 1}
+                                {columnPreviews[index] || `Column ${index + 1}`}
                               </option>
                             ))}
                           </select>
@@ -413,16 +435,21 @@ export function TransactionGrid({
                         editing?.rowId === row.id && editing.field === field;
                       const isSelected =
                         selected?.rowId === row.id && selected.field === field;
-                      const flagged = isFlagged(row, field);
+                      const flagged = isFieldFlagged(row, field);
                       const original = getOriginalDisplay(row, field);
                       const alignClass =
                         field === 'amount' || field === 'balance'
                           ? 'text-right'
                           : 'text-left';
+                      const frozen = freezeDateColumn && field === 'date';
+                      const frozenBg = isRowSelected ? 'bg-accent-soft' : 'bg-surface';
 
                       if (isEditing) {
                         return (
-                          <td key={field} className="border-b border-line p-0">
+                          <td
+                            key={field}
+                            className={`border-b border-line p-0 ${frozen ? `sticky left-0 z-10 border-r ${frozenBg}` : ''}`}
+                          >
                             <input
                               ref={editInputRef}
                               data-grid-editing="true"
@@ -456,7 +483,7 @@ export function TransactionGrid({
                           title={original ? `Originally: ${original}` : undefined}
                           className={`cursor-text overflow-hidden text-ellipsis whitespace-nowrap border-b border-line px-3 py-1.5 font-mono text-sm text-ink ${alignClass} ${
                             isSelected ? 'ring-2 ring-inset ring-accent' : ''
-                          }`}
+                          } ${frozen ? `sticky left-0 z-10 border-r ${frozenBg}` : ''}`}
                         >
                           <span
                             className={
@@ -526,7 +553,7 @@ export function TransactionGrid({
         </div>
       )}
 
-      {debug && <TransactionDetailPanel row={selectedRow} />}
+      <TransactionDetailPanel row={selectedRow} />
     </div>
   );
 }

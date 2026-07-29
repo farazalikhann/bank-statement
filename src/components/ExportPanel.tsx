@@ -106,28 +106,28 @@ export function ExportPanel({ options, onOptionsChange, onExport }: ExportPanelP
         <button
           type="button"
           onClick={() => onExport('xlsx')}
-          className="rounded-md border border-line-strong px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:border-accent"
+          className="min-h-11 md:min-h-0 rounded-md border border-line-strong px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:border-accent"
         >
           Export Excel (.xlsx)
         </button>
         <button
           type="button"
           onClick={() => onExport('csv')}
-          className="rounded-md border border-line-strong px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:border-accent"
+          className="min-h-11 md:min-h-0 rounded-md border border-line-strong px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:border-accent"
         >
           Export CSV
         </button>
         <button
           type="button"
           onClick={() => onExport('quickbooks')}
-          className="rounded-md border border-line-strong px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:border-accent"
+          className="min-h-11 md:min-h-0 rounded-md border border-line-strong px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:border-accent"
         >
           Export QuickBooks CSV
         </button>
         <button
           type="button"
           onClick={() => onExport('xero')}
-          className="rounded-md border border-line-strong px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:border-accent"
+          className="min-h-11 md:min-h-0 rounded-md border border-line-strong px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:border-accent"
         >
           Export Xero CSV
         </button>

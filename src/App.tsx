@@ -12,7 +12,7 @@ import { ExtractedTable } from './components/ExtractedTable';
 import { DroppedRowsPanel } from './components/DroppedRowsPanel';
 import { ParsingSummary } from './components/ParsingSummary';
 import { IntegrityReport } from './components/IntegrityReport';
-import { TransactionGrid } from './components/TransactionGrid';
+import { TransactionsSection } from './components/TransactionsSection';
 import { ReconciliationPanel } from './components/ReconciliationPanel';
 import { ExportPanel } from './components/ExportPanel';
 import { ColumnDetectionWarning } from './components/ColumnDetectionWarning';
@@ -159,6 +159,24 @@ function App() {
     [columnRoles, setColumnRoleOverride],
   );
 
+  const MAX_PREVIEW_LENGTH = 24;
+  // What a user actually recognizes a column by — its own data — not an
+  // internal index. First non-empty cell per raw column, from the current
+  // page's raw rows.
+  const columnPreviews = useMemo(() => {
+    return columnRoles.map((_, index) => {
+      for (const row of cleanedRows) {
+        const cell = row.cells[index]?.trim();
+        if (cell) {
+          return cell.length > MAX_PREVIEW_LENGTH
+            ? `${cell.slice(0, MAX_PREVIEW_LENGTH)}…`
+            : cell;
+        }
+      }
+      return '';
+    });
+  }, [columnRoles, cleanedRows]);
+
   const statusText = extractionProgress
     ? `Reading PDF… (page ${extractionProgress.done} of ${extractionProgress.total})`
     : undefined;
@@ -188,25 +206,23 @@ function App() {
 
         {fileName && !error && (
           <>
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-surface px-4 py-3">
+            <div className="flex items-center justify-between gap-3 rounded-md border border-line bg-surface px-4 py-3">
               <span
-                className="truncate font-mono text-sm text-ink"
+                className="min-w-0 flex-1 truncate font-mono text-sm text-ink"
                 title={fileName}
               >
                 {fileName}
               </span>
-              <div className="flex items-center gap-4">
-                <PageSelector
-                  currentPage={currentPageNumber}
-                  numPages={numPages}
-                  onChange={setCurrentPageNumber}
-                />
+              <div className="flex shrink-0 items-center gap-3">
+                <span className="whitespace-nowrap text-sm text-ink-muted">
+                  {numPages} page{numPages === 1 ? '' : 's'}
+                </span>
                 <button
                   type="button"
                   onClick={handleReset}
-                  className="rounded-md border border-line-strong px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:border-accent"
+                  className="min-h-11 whitespace-nowrap rounded-md border border-line-strong px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:border-accent"
                 >
-                  Choose a different file
+                  Change file
                 </button>
               </div>
             </div>
@@ -222,7 +238,8 @@ function App() {
               onClosingChange={setClosingBalanceInput}
             />
 
-            <TransactionGrid
+            <TransactionsSection
+              fileName={fileName}
               rows={editableRows}
               onCommitEdit={commitEdit}
               onDeleteRow={deleteRow}
@@ -233,9 +250,11 @@ function App() {
               onRedo={redo}
               rowFlags={rowFlags}
               columnRoles={columnRoles}
+              columnPreviews={columnPreviews}
               columnShape={columnShape}
               onColumnRoleReassign={handleColumnRoleReassign}
-              debug={isDebug}
+              reconciliation={reconciliation}
+              onExport={exportAs}
             />
 
             <ExportPanel
@@ -246,6 +265,12 @@ function App() {
 
             {isDebug && (
               <>
+                <PageSelector
+                  currentPage={currentPageNumber}
+                  numPages={numPages}
+                  onChange={setCurrentPageNumber}
+                />
+
                 <IntegrityReport
                   pageIntegrity={pageIntegrity}
                   statementSummary={statementSummary}

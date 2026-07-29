@@ -19,6 +19,11 @@
   --color-accent: #0f6656;
   --color-accent-hover: #0b4f43;
   --color-accent-soft: #e8f2f0;
+  /* Text color for primary buttons filled with --color-accent. Needed as
+     its own token (not a fixed white) because dark mode's --color-accent
+     is a much brighter teal — white text on it fails WCAG AA, so this
+     flips to a near-black green there instead. */
+  --color-accent-contrast: #ffffff;
   --color-danger: #b91c1c;
   --color-danger-soft: #fef2f2;
   --color-danger-line: #fecaca;
@@ -45,6 +50,7 @@
     --color-accent: #35a08a;
     --color-accent-hover: #4bb89f;
     --color-accent-soft: #16302a;
+    --color-accent-contrast: #071a15;
     --color-danger: #f87171;
     --color-danger-soft: #2a1616;
     --color-danger-line: #4a1f1f;
