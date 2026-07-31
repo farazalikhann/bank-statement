@@ -42,7 +42,7 @@ export function analyzePage(
 
   let columns: ColumnCluster[];
   try {
-    columns = detectColumns(rows, columnOptions);
+    columns = detectColumns(rows, columnOptions, pageNumber === 1);
   } catch (err) {
     throw wrapStageError(
       'column-detection-failed',

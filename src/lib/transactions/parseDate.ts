@@ -1,4 +1,5 @@
 import type { ConfidenceLevel } from '../pdf/types';
+import { matchDateShape } from '../pdf/textPatterns';
 import type { DateFormatInfo } from './types';
 
 const MONTH_NAMES: Record<string, number> = {
@@ -15,11 +16,6 @@ const MONTH_NAMES: Record<string, number> = {
   nov: 11,
   dec: 12,
 };
-
-const ISO_PATTERN = /^(\d{4})-(\d{1,2})-(\d{1,2})$/;
-const AMBIGUOUS_PATTERN = /^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/;
-const MONTH_FIRST_PATTERN = /^([a-z]{3,9})\.?\s+(\d{1,2})(?:,?\s*(\d{2,4}))?$/i;
-const DAY_FIRST_PATTERN = /^(\d{1,2})\s+([a-z]{3,9})\.?(?:,?\s*(\d{2,4}))?$/i;
 
 function monthNumber(name: string): number | null {
   return MONTH_NAMES[name.slice(0, 3).toLowerCase()] ?? null;
@@ -48,11 +44,11 @@ export function resolveDateFormat(texts: string[]): DateFormatInfo {
   let sawAmbiguousPattern = false;
 
   for (const text of texts) {
-    const match = AMBIGUOUS_PATTERN.exec(text.trim());
-    if (!match) continue;
+    const shape = matchDateShape(text);
+    if (!shape || shape.kind !== 'ambiguous') continue;
     sawAmbiguousPattern = true;
-    const part1 = parseInt(match[1], 10);
-    const part2 = parseInt(match[2], 10);
+    const part1 = parseInt(shape.part1, 10);
+    const part2 = parseInt(shape.part2, 10);
     if (part1 > 12) dmyRevealed = true;
     if (part2 > 12) mdyRevealed = true;
   }
@@ -107,59 +103,50 @@ export function computeFallbackYear(
   return bestYear;
 }
 
+// The actual Date-column parser. Deliberately built on the exact same
+// matchDateShape() used for row/column qualification (isDateLike) — a value
+// that qualifies a column as "date" is guaranteed to be parseable here too,
+// and vice versa, so the two can never drift out of sync the way they used
+// to when each kept its own regex list.
 export function parseDateValue(
   text: string,
   formatInfo: DateFormatInfo,
   fallbackYear: number | null,
 ): { iso: string; confidence: ConfidenceLevel } | null {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
+  const shape = matchDateShape(text);
+  if (!shape) return null;
 
-  const isoMatch = ISO_PATTERN.exec(trimmed);
-  if (isoMatch) {
-    const iso = toIso(
-      parseInt(isoMatch[1], 10),
-      parseInt(isoMatch[2], 10),
-      parseInt(isoMatch[3], 10),
-    );
-    return iso ? { iso, confidence: 'high' } : null;
+  switch (shape.kind) {
+    case 'iso': {
+      const iso = toIso(
+        parseInt(shape.year, 10),
+        parseInt(shape.month, 10),
+        parseInt(shape.day, 10),
+      );
+      return iso ? { iso, confidence: 'high' } : null;
+    }
+
+    case 'ambiguous': {
+      const part1 = parseInt(shape.part1, 10);
+      const part2 = parseInt(shape.part2, 10);
+      const year = fullYear(shape.year);
+      const [month, day] =
+        formatInfo.order === 'MDY' ? [part1, part2] : [part2, part1];
+      const iso = toIso(year, month, day);
+      if (!iso) return null;
+      return { iso, confidence: formatInfo.resolved ? 'high' : 'medium' };
+    }
+
+    case 'month-first': {
+      const month = monthNumber(shape.month);
+      if (!month) return null;
+      return monthNameResult(month, parseInt(shape.day, 10), shape.year, fallbackYear);
+    }
+
+    case 'day-first': {
+      const month = monthNumber(shape.month);
+      if (!month) return null;
+      return monthNameResult(month, parseInt(shape.day, 10), shape.year, fallbackYear);
+    }
   }
-
-  const ambiguousMatch = AMBIGUOUS_PATTERN.exec(trimmed);
-  if (ambiguousMatch) {
-    const part1 = parseInt(ambiguousMatch[1], 10);
-    const part2 = parseInt(ambiguousMatch[2], 10);
-    const year = fullYear(ambiguousMatch[3]);
-    const [month, day] =
-      formatInfo.order === 'MDY' ? [part1, part2] : [part2, part1];
-    const iso = toIso(year, month, day);
-    if (!iso) return null;
-    return { iso, confidence: formatInfo.resolved ? 'high' : 'medium' };
-  }
-
-  const monthFirstMatch = MONTH_FIRST_PATTERN.exec(trimmed);
-  if (monthFirstMatch) {
-    const month = monthNumber(monthFirstMatch[1]);
-    if (!month) return null;
-    return monthNameResult(
-      month,
-      parseInt(monthFirstMatch[2], 10),
-      monthFirstMatch[3],
-      fallbackYear,
-    );
-  }
-
-  const dayFirstMatch = DAY_FIRST_PATTERN.exec(trimmed);
-  if (dayFirstMatch) {
-    const month = monthNumber(dayFirstMatch[2]);
-    if (!month) return null;
-    return monthNameResult(
-      month,
-      parseInt(dayFirstMatch[1], 10),
-      dayFirstMatch[3],
-      fallbackYear,
-    );
-  }
-
-  return null;
 }

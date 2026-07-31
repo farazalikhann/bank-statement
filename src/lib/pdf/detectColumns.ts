@@ -10,6 +10,17 @@ const MIN_SHRINK_GAP = 1;
 const MAX_SHRINK_ATTEMPTS = 5;
 const SHRINK_FACTOR = 0.5;
 
+// Below this many qualifying rows, there isn't enough of a sample to trust
+// for the whitespace projection — silently projecting over every row
+// (including header/preamble furniture) is what let those furniture lines
+// bridge real column gaps in the first place.
+const MIN_QUALIFYING_ROWS = 5;
+// How much of page 1's vertical span to treat as "the header block" once
+// even the loosened currency-only rule can't find enough rows — account
+// summary lines (statement period, account holder, etc.) cluster at the
+// top of the first page.
+const HEADER_BLOCK_FRACTION = 0.25;
+
 // A date is never anywhere close to this long — a cell this long in the
 // column that otherwise looks like "the date column" means it absorbed the
 // next column's text (columns merged, not just this one row being unusual).
@@ -28,6 +39,10 @@ function isLikelyHeaderRow(row: Row): boolean {
   return matches >= 2;
 }
 
+function hasCurrencyToken(row: Row): boolean {
+  return row.items.some((item) => parseCurrencyAmount(item.text.trim()) !== null);
+}
+
 // A preamble/summary line (account number, "Opening Balance: 4,182.55") is
 // often a single wide, un-split text blob rather than several separately-
 // positioned cells — and that one blob can span the gap between two real
@@ -40,10 +55,75 @@ function isLikelyHeaderRow(row: Row): boolean {
 // would otherwise distort the projection.
 function isTransactionRow(row: Row): boolean {
   const hasDate = row.items.some((item) => isDateLike(item.text.trim()));
-  const hasCurrency = row.items.some(
-    (item) => parseCurrencyAmount(item.text.trim()) !== null,
-  );
-  return hasDate && hasCurrency;
+  return hasDate && hasCurrencyToken(row);
+}
+
+// Excludes rows sitting in the top HEADER_BLOCK_FRACTION of the page's own
+// vertical span (measured from `referenceRows`, the full unfiltered set of
+// rows on the page) — that's where a statement's account-summary furniture
+// (statement period, account holder, address block) lives, and it's the
+// last thing standing between "still too few qualifying rows" and handing
+// the projection a real column boundary to find.
+function excludeHeaderBlock(rows: Row[], referenceRows: Row[]): Row[] {
+  if (referenceRows.length === 0) return rows;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const row of referenceRows) {
+    if (row.y < minY) minY = row.y;
+    if (row.y > maxY) maxY = row.y;
+  }
+  const cutoff = minY + (maxY - minY) * HEADER_BLOCK_FRACTION;
+  return rows.filter((row) => row.y > cutoff);
+}
+
+type RowSelectionPath =
+  | 'strict-transaction-rows'
+  | 'currency-only'
+  | 'currency-only-minus-header-block'
+  | 'currency-only-fallback'
+  | 'strict-fallback'
+  | 'all-non-header-rows';
+
+// Picks which rows to hand to the whitespace projection. Never silently
+// falls back to "every row" the moment the strict (date + currency)
+// qualifier comes up short — that's exactly how a preamble line like
+// "Period: 01-Mar-2026 through 30-Jun-2026" (which has dates but no
+// currency) or "Member: M. R. CARTER" (neither) used to end up bridging the
+// Date/Description gap in the projection. Instead this escalates through
+// progressively looser rules, and only actually widens the candidate set
+// when doing so grows it — degrading gracefully instead of guessing.
+function selectDataRows(
+  allRows: Row[],
+  nonHeaderRows: Row[],
+  isFirstPage: boolean,
+): { dataRows: Row[]; path: RowSelectionPath } {
+  const strict = nonHeaderRows.filter(isTransactionRow);
+  if (strict.length >= MIN_QUALIFYING_ROWS) {
+    return { dataRows: strict, path: 'strict-transaction-rows' };
+  }
+
+  const looser = nonHeaderRows.filter(hasCurrencyToken);
+  if (looser.length >= MIN_QUALIFYING_ROWS) {
+    return { dataRows: looser, path: 'currency-only' };
+  }
+
+  if (isFirstPage) {
+    const base = looser.length > 0 ? looser : nonHeaderRows;
+    const trimmed = excludeHeaderBlock(base, allRows);
+    if (trimmed.length > 0 && trimmed.length > strict.length) {
+      return { dataRows: trimmed, path: 'currency-only-minus-header-block' };
+    }
+  }
+
+  // Nothing cleared the bar — use whatever's largest rather than handing
+  // the projection an empty sample.
+  if (looser.length > strict.length) {
+    return { dataRows: looser, path: 'currency-only-fallback' };
+  }
+  if (strict.length > 0) {
+    return { dataRows: strict, path: 'strict-fallback' };
+  }
+  return { dataRows: nonHeaderRows, path: 'all-non-header-rows' };
 }
 
 // Merges each item's full [start, end] interval (not just its start point),
@@ -112,17 +192,16 @@ function dateColumnLooksOverMerged(rows: Row[], columns: ColumnCluster[]): boole
 export function detectColumns(
   rows: Row[],
   { gapX }: ColumnDetectionOptions,
+  isFirstPage: boolean,
 ): ColumnCluster[] {
   const headerRow = rows.find(isLikelyHeaderRow) ?? null;
-  const transactionRows = rows.filter(isTransactionRow);
-  // Fall back to "everything but the header" only if nothing qualified as
-  // a transaction row at all — an edge-case layout where a date and its
-  // amount never land on the same raw row before merging — rather than
-  // handing the projection an empty sample.
-  const dataRows =
-    transactionRows.length > 0
-      ? transactionRows
-      : rows.filter((row) => row !== headerRow);
+  const nonHeaderRows = rows.filter((row) => row !== headerRow);
+  const { dataRows, path } = selectDataRows(rows, nonHeaderRows, isFirstPage);
+  if (path !== 'strict-transaction-rows') {
+    console.info(
+      `[detectColumns] only ${nonHeaderRows.filter(isTransactionRow).length} row(s) qualified as strict transaction rows (need ${MIN_QUALIFYING_ROWS}) — used fallback path "${path}" with ${dataRows.length} row(s) for the column projection.`,
+    );
+  }
 
   let currentGap = gapX;
   let columns = clusterByRange(dataRows, currentGap);
