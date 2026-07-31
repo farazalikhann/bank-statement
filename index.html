@@ -4,10 +4,30 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>StatementKit — Bank Statement PDF to CSV</title>
+    <!--
+      This is a shared template for every route — vite-react-ssg renders
+      each page's own <title>/<meta>/JSON-LD (see src/components/seo/Seo.tsx)
+      into this <head> at build time via react-helmet, replacing the
+      fallback description below. Nothing route-specific belongs here.
+    -->
+    <meta
+      name="description"
+      content="Convert bank statement PDFs into clean Excel and CSV files entirely in your browser. No upload, no server — built for bookkeepers, accountants, and mortgage brokers."
+    />
+
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-1Q1H2BRBZW"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+
+      gtag('config', 'G-1Q1H2BRBZW');
+    </script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
+
