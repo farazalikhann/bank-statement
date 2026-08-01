@@ -12,7 +12,12 @@ import { generateSeoFiles } from './scripts/generateSeoFiles.js'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: '/bank-statement/',
+  // Served from the custom domain statementkit.work at the site root —
+  // see public/CNAME. Not a GitHub Pages subpath anymore, so this must
+  // stay '/'; everything else in the app reads import.meta.env.BASE_URL
+  // rather than hardcoding a path, so this is the only place that needs
+  // to change if the deployment path ever changes again.
+  base: '/',
   // Every route (homepage, blog posts, /convert/<bank> pages, static
   // pages) is pre-rendered to a real .html file by vite-react-ssg — see
   // src/main.tsx and src/routes.tsx — instead of the old approach of one

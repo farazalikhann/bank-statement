@@ -8,8 +8,8 @@ import matter from 'gray-matter';
 // it can't import.meta.glob the content directory or read import.meta.env
 // the way the app itself does; it reads the same markdown files directly
 // off disk instead.
-const SITE_ORIGIN = 'https://farazalikhann.github.io';
-const BASE = '/bank-statement/';
+const SITE_ORIGIN = 'https://statementkit.work';
+const BASE = '/';
 
 function readSlugsAndTags(dir: string) {
   const files = readdirSync(dir).filter((f) => f.endsWith('.md'));

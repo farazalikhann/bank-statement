@@ -1,5 +1,5 @@
 export const SITE_NAME = 'StatementKit';
-export const SITE_ORIGIN = 'https://farazalikhann.github.io';
+export const SITE_ORIGIN = 'https://statementkit.work';
 export const AUTHOR_NAME = 'Faraz Ali Khan';
 
 // `path` is relative to the app base (e.g. '' for home, 'about/',

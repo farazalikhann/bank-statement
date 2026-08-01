@@ -24,9 +24,10 @@ export async function loadPdf(file: File): Promise<PDFDocumentProxy> {
 
   // Statements using non-embedded base-14 fonts (Helvetica/Times/Courier —
   // extremely common) need these on disk or getDocument() throws entirely.
-  // Must be built from BASE_URL, not a leading-slash absolute path — this
-  // app deploys under /bank-statement/, and a hardcoded "/standard_fonts/"
-  // would 404 there.
+  // Must be built from BASE_URL, not a hardcoded leading-slash path — the
+  // deployment path has already changed once (GitHub Pages subpath to a
+  // custom domain at root), and a hardcoded "/standard_fonts/" would 404
+  // under any base path other than whatever it was hardcoded for.
   const base = import.meta.env.BASE_URL;
 
   try {
